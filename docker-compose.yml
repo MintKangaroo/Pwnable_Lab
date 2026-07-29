@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      PLAB_DATABASE_URL: sqlite:////data/pwnable_lab.db
+      PLAB_STORAGE_DIR: /data/binaries
+      PLAB_CORS_ORIGINS: '["http://localhost:8080"]'
+    volumes:
+      - pwnable-data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "${PLAB_PORT:-8080}:80"
+    restart: unless-stopped
+
+volumes:
+  pwnable-data:

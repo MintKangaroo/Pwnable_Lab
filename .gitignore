@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Runtime data
+*.db
+_storage/
+data/
+backend/_storage/
+backend/data/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Local configuration and editors
+.env
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Build artifacts
+build/
+dist/

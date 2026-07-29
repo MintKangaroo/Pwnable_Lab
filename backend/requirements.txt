@@ -1,0 +1,9 @@
+# Runtime dependencies. pyproject.toml is the authoritative package metadata.
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+python-multipart>=0.0.12,<1
+pydantic>=2.9,<3
+pydantic-settings>=2.5,<3
+SQLAlchemy>=2.0,<3
+capstone>=5.0,<6
+pyelftools>=0.31,<1
