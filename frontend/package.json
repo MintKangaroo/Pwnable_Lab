@@ -7,14 +7,32 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --port 4173"
+    "preview": "vite preview --port 4173",
+    "lint": "eslint . && prettier --check \"src/**/*.{js,jsx,ts,tsx,css}\" \"tests/**/*.ts\" \"*.{js,ts,json}\"",
+    "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css}\" \"tests/**/*.ts\" \"*.{js,ts,json}\"",
+    "typecheck": "tsc --noEmit",
+    "e2e": "playwright test"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.83.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-router-dom": "5.3.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.55.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/react-router-dom": "^5.3.3",
     "@vitejs/plugin-react": "^6.0.0",
+    "eslint": "^10.8.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.8.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.65.0",
     "vite": "^8.1.0"
   }
 }

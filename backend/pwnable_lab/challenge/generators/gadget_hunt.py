@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import random
 
+from pwnable_lab.analyzer.gadgets import find_gadgets, search_gadgets
 from pwnable_lab.challenge.base import (
-    ChallengeGenerator, POP_RDI_RET, POP_RSI_R15_RET, POP_RDX_RET,
-    RET, XOR_EAX_RET, sub_rsp,
+    POP_RDI_RET,
+    POP_RDX_RET,
+    POP_RSI_R15_RET,
+    RET,
+    XOR_EAX_RET,
+    ChallengeGenerator,
+    sub_rsp,
 )
 from pwnable_lab.challenge.models import ChallengeMeta, GeneratedChallenge
 from pwnable_lab.elf.builder import ElfBuilder, Symbol
-from pwnable_lab.analyzer.gadgets import find_gadgets, search_gadgets
 from pwnable_lab.elf.parser import parse_elf
 
 
@@ -37,7 +42,7 @@ class GadgetHuntGenerator(ChallengeGenerator):
             POP_RSI_R15_RET,
             RET * rng.randint(1, 4),
             POP_RDX_RET,
-            POP_RDI_RET,       # 목표 가젯
+            POP_RDI_RET,  # 목표 가젯
             POP_RSI_R15_RET,
         ]
         text = b"".join(chunks)
@@ -46,7 +51,10 @@ class GadgetHuntGenerator(ChallengeGenerator):
             text=text,
             rodata=b"/bin/sh\x00",
             symbols=[Symbol("main", ".text", 0, len(chunks[0]))],
-            pie=False, nx=True, relro="partial", canary=False,
+            pie=False,
+            nx=True,
+            relro="partial",
+            canary=False,
         )
         data = image.build()
 

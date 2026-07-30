@@ -7,16 +7,24 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="PLAB_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="PLAB_", env_file=".env", extra="ignore"
+    )
+
+    app_name: str = "PwnPilot"
+    environment: str = "development"
 
     # 업로드/저장
-    max_upload_bytes: int = 16 * 1024 * 1024  # 16 MiB
+    max_upload_bytes: int = Field(default=32 * 1024 * 1024, gt=0)  # 32 MiB
+    upload_chunk_bytes: int = Field(default=1024 * 1024, gt=0, le=4 * 1024 * 1024)
     storage_dir: str = "./_storage"
     database_url: str = "sqlite:///./pwnable_lab.db"
+    auto_create_schema: bool = True
 
     # 분석 한계 (DoS 방지)
     max_disasm_instructions: int = 20000

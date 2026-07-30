@@ -12,18 +12,27 @@ from pwnable_lab.elf.parser import ElfImage
 
 # 함수명 -> (카테고리, 심각도, 설명)
 _DANGEROUS: dict[str, tuple[str, str, str]] = {
-    "gets": ("buffer-overflow", "critical",
-             "길이 검사가 없어 스택 버퍼 오버플로우가 항상 가능합니다."),
-    "strcpy": ("buffer-overflow", "high",
-               "대상 버퍼 크기를 확인하지 않습니다. strlcpy/strncpy 를 사용하세요."),
+    "gets": (
+        "buffer-overflow",
+        "critical",
+        "길이 검사가 없어 스택 버퍼 오버플로우가 항상 가능합니다.",
+    ),
+    "strcpy": (
+        "buffer-overflow",
+        "high",
+        "대상 버퍼 크기를 확인하지 않습니다. strlcpy/strncpy 를 사용하세요.",
+    ),
     "strcat": ("buffer-overflow", "high", "경계 검사가 없는 문자열 연결."),
     "sprintf": ("buffer-overflow", "high", "출력 길이 제한이 없습니다. snprintf 사용."),
     "scanf": ("buffer-overflow", "medium", "%s 포맷은 폭 지정이 없으면 위험합니다."),
     "vsprintf": ("buffer-overflow", "high", "가변 인자 sprintf — 경계 없음."),
     "read": ("buffer-overflow", "info", "길이 인자가 버퍼보다 크면 오버플로우 가능."),
     "memcpy": ("buffer-overflow", "info", "길이가 사용자 입력이면 오버플로우 가능."),
-    "printf": ("format-string", "medium",
-               "첫 인자가 사용자 입력이면 포맷 스트링 취약점입니다."),
+    "printf": (
+        "format-string",
+        "medium",
+        "첫 인자가 사용자 입력이면 포맷 스트링 취약점입니다.",
+    ),
     "fprintf": ("format-string", "medium", "포맷 인자가 사용자 제어면 위험."),
     "snprintf": ("format-string", "info", "포맷 인자가 사용자 제어면 위험."),
     "syslog": ("format-string", "medium", "포맷 인자가 사용자 제어면 위험."),

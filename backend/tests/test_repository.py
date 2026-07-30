@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 
 import pytest
 
@@ -30,6 +31,32 @@ def test_duplicate_store_returns_existing_record(repository):
     assert first.sha256 == second.sha256
     assert second.filename == "first.elf"
     assert len(repository.list()) == 1
+
+
+def test_analysis_job_lifecycle_and_binary_status(repository):
+    binary = repository.store(b"same", "sample.elf", "EM_X86_64", 64)
+    queued = repository.create_analysis_job(binary.sha256)
+    assert queued.status == "queued"
+    assert repository.get(binary.sha256).analysis_status == "queued"
+
+    completed = repository.update_analysis_job(
+        queued.id,
+        status="completed",
+        result={"verification": "verified"},
+    )
+    assert completed.completed_at is not None
+    assert repository.latest_analysis(binary.sha256).id == queued.id
+    assert repository.get(binary.sha256).analysis_status == "completed"
+
+
+def test_delete_removes_record_and_artifact(repository):
+    binary = repository.store(b"delete-me", "sample.elf", "EM_X86_64", 64)
+    path = repository._path(binary.sha256)
+    assert repository.load_bytes(binary.sha256) == b"delete-me"
+    repository.delete(binary.sha256)
+    assert not os.path.exists(path)
+    with pytest.raises(NotFoundError):
+        repository.get(binary.sha256)
 
 
 def test_missing_and_malformed_hash_raise_not_found(repository):

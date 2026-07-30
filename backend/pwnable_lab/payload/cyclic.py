@@ -45,8 +45,13 @@ def cyclic(length: int, *, alphabet: bytes = _DEFAULT_ALPHABET, n: int = 4) -> b
     return bytes(next(gen) for _ in range(length))
 
 
-def cyclic_find(subseq: bytes | int, *, alphabet: bytes = _DEFAULT_ALPHABET,
-                n: int = 4, max_length: int = 65536) -> int:
+def cyclic_find(
+    subseq: bytes | int,
+    *,
+    alphabet: bytes = _DEFAULT_ALPHABET,
+    n: int = 4,
+    max_length: int = 65536,
+) -> int:
     """부분 수열(또는 4바이트 레지스터 값)이 처음 등장하는 오프셋을 반환.
 
     ``subseq`` 가 int 이면 리틀엔디언 4바이트로 변환해 검색한다(EIP/RSP 값 대응).

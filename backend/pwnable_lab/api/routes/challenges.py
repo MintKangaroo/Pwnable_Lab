@@ -23,8 +23,9 @@ def challenges(repo: BinaryRepository = Depends(get_repository)) -> list[dict]:
 
 
 @router.get("/{slug}")
-def challenge_detail(slug: str,
-                     repo: BinaryRepository = Depends(get_repository)) -> dict:
+def challenge_detail(
+    slug: str, repo: BinaryRepository = Depends(get_repository)
+) -> dict:
     ch = get_challenge(slug)
     d = ch.meta.public_dict()
     d["hints"] = ch.hints
@@ -44,8 +45,9 @@ def challenge_artifact(slug: str) -> Response:
 
 
 @router.post("/{slug}/submit", response_model=SubmitResponse)
-def submit(slug: str, req: SubmitRequest,
-           repo: BinaryRepository = Depends(get_repository)) -> SubmitResponse:
+def submit(
+    slug: str, req: SubmitRequest, repo: BinaryRepository = Depends(get_repository)
+) -> SubmitResponse:
     ch = get_challenge(slug)
     correct = ch.check(req.answer)
     repo.record_submission(slug, correct)

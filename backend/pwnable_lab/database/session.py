@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 from pwnable_lab.database.models import Base
 
 
-def make_engine(database_url: str):
+def make_engine(database_url: str, *, create_schema: bool = True):
     kwargs: dict = {"future": True}
     if database_url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
@@ -17,7 +17,8 @@ def make_engine(database_url: str):
         if ":memory:" in database_url or database_url in ("sqlite://",):
             kwargs["poolclass"] = StaticPool
     engine = create_engine(database_url, **kwargs)
-    Base.metadata.create_all(engine)
+    if create_schema:
+        Base.metadata.create_all(engine)
     return engine
 
 

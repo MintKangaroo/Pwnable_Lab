@@ -1,0 +1,79 @@
+name: pwnpilot-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pwnpilot}
+      POSTGRES_USER: ${POSTGRES_USER:-pwnpilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-development-only-change-me}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-data:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    command:
+      - /bin/sh
+      - -c
+      - alembic upgrade head && exec uvicorn pwnable_lab.api.app:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      PLAB_APP_NAME: PwnPilot
+      PLAB_ENVIRONMENT: development
+      PLAB_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pwnpilot}:${POSTGRES_PASSWORD:-development-only-change-me}@postgres:5432/${POSTGRES_DB:-pwnpilot}
+      PLAB_AUTO_CREATE_SCHEMA: "false"
+      PLAB_STORAGE_DIR: /data/binaries
+      PLAB_MAX_UPLOAD_BYTES: "33554432"
+      PLAB_CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - artifact-data:/data
+
+  frontend:
+    image: node:22-alpine
+    command:
+      - /bin/sh
+      - -c
+      - npm ci && exec npm run dev -- --host 0.0.0.0
+    working_dir: /app
+    environment:
+      VITE_API_TARGET: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+
+volumes:
+  artifact-data:
+  frontend-node-modules:
+  postgres-data:
+  redis-data:

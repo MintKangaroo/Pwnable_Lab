@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs
+from capstone import (  # type: ignore[import-untyped]
+    CS_ARCH_X86,
+    CS_MODE_32,
+    CS_MODE_64,
+    Cs,
+)
 
 from pwnable_lab.elf.parser import ElfImage
 from pwnable_lab.errors import AnalysisError
@@ -22,15 +27,22 @@ class Instruction:
         return self.mnemonic if not self.op_str else f"{self.mnemonic} {self.op_str}"
 
 
-def disassemble(image: ElfImage, *, address: int | None = None,
-                count: int = 200, max_instructions: int = 20000) -> list[Instruction]:
+def disassemble(
+    image: ElfImage,
+    *,
+    address: int | None = None,
+    count: int = 200,
+    max_instructions: int = 20000,
+) -> list[Instruction]:
     """주어진 주소(기본: entry)에서 최대 ``count`` 개 명령을 선형 디스어셈블."""
     if image.machine not in {"EM_386", "EM_X86_64"}:
         raise AnalysisError(
             f"디스어셈블리는 현재 x86/x86-64만 지원합니다: {image.machine}"
         )
     if count > max_instructions:
-        raise AnalysisError(f"요청 명령 수({count})가 한계({max_instructions})를 초과했습니다.")
+        raise AnalysisError(
+            f"요청 명령 수({count})가 한계({max_instructions})를 초과했습니다."
+        )
 
     text = image.section(".text")
     if text is None:

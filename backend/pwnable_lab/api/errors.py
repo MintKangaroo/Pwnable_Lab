@@ -6,8 +6,13 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from pwnable_lab.errors import (
-    AnalysisError, ChallengeError, NotFoundError, ParseError,
-    PayloadTooLargeError, PwnableLabError, ToolUnavailableError,
+    AnalysisError,
+    ChallengeError,
+    NotFoundError,
+    ParseError,
+    PayloadTooLargeError,
+    PwnableLabError,
+    ToolUnavailableError,
     UnsupportedFormatError,
 )
 

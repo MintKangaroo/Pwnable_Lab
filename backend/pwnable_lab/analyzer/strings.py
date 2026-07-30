@@ -14,8 +14,9 @@ class ExtractedString:
     value: str
 
 
-def extract_strings(data: bytes, *, min_length: int = 4,
-                    max_strings: int = 20000) -> list[ExtractedString]:
+def extract_strings(
+    data: bytes, *, min_length: int = 4, max_strings: int = 20000
+) -> list[ExtractedString]:
     out: list[ExtractedString] = []
     out.extend(_ascii_strings(data, min_length))
     out.extend(_utf16_strings(data, min_length))
@@ -32,7 +33,9 @@ def _ascii_strings(data: bytes, min_length: int) -> list[ExtractedString]:
                 start = i
         else:
             if start is not None and i - start >= min_length:
-                out.append(ExtractedString(start, "ascii", data[start:i].decode("ascii")))
+                out.append(
+                    ExtractedString(start, "ascii", data[start:i].decode("ascii"))
+                )
             start = None
     if start is not None and len(data) - start >= min_length:
         out.append(ExtractedString(start, "ascii", data[start:].decode("ascii")))

@@ -46,7 +46,6 @@ _CANARY_SYMBOLS = {"__stack_chk_fail", "__stack_chk_guard", "__intel_security_co
 
 def run_checksec(image: ElfImage) -> Checksec:
     seg_types = {s.ptype for s in image.segments}
-    has_dynamic = "PT_DYNAMIC" in seg_types
 
     # --- NX ---
     nx = True

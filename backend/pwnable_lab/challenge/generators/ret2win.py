@@ -5,7 +5,10 @@ from __future__ import annotations
 import random
 
 from pwnable_lab.challenge.base import (
-    ChallengeGenerator, RET, XOR_EAX_RET, sub_rsp,
+    RET,
+    XOR_EAX_RET,
+    ChallengeGenerator,
+    sub_rsp,
 )
 from pwnable_lab.challenge.models import ChallengeMeta, GeneratedChallenge
 from pwnable_lab.elf.builder import ElfBuilder, Symbol
@@ -43,10 +46,16 @@ class Ret2WinGenerator(ChallengeGenerator):
                 Symbol("main", ".text", 0, len(main_code)),
                 Symbol("win", ".text", win_off, len(win_code)),
             ],
-            pie=False, nx=True, relro="partial", canary=False,
+            pie=False,
+            nx=True,
+            relro="partial",
+            canary=False,
         )
         data = image.build()
-        win_addr = parse_elf(data).symbol("win").addr
+        win_symbol = parse_elf(data).symbol("win")
+        if win_symbol is None:
+            raise RuntimeError("생성된 ret2win fixture에서 win 심볼을 찾지 못했습니다.")
+        win_addr = win_symbol.addr
 
         return GeneratedChallenge(
             meta=self.meta,

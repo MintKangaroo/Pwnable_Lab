@@ -14,7 +14,9 @@ from tests.fixtures import sample_elf
 
 
 def test_checksec_all_on():
-    cs = run_checksec(parse_elf(sample_elf(nx=True, pie=True, relro="full", canary=True)))
+    cs = run_checksec(
+        parse_elf(sample_elf(nx=True, pie=True, relro="full", canary=True))
+    )
     assert cs.nx is True
     assert cs.pie == "PIE"
     assert cs.relro == "Full"
@@ -22,7 +24,9 @@ def test_checksec_all_on():
 
 
 def test_checksec_all_off():
-    cs = run_checksec(parse_elf(sample_elf(nx=False, pie=False, relro="none", canary=False)))
+    cs = run_checksec(
+        parse_elf(sample_elf(nx=False, pie=False, relro="none", canary=False))
+    )
     assert cs.nx is False
     assert cs.pie == "No PIE"
     assert cs.relro == "No"
@@ -48,8 +52,11 @@ def test_vuln_scan_detects_and_ranks():
 def test_gadget_finder_finds_pop_rdi():
     img = parse_elf(sample_elf())
     gadgets = find_gadgets(img)
-    hits = [g for g in search_gadgets(gadgets, "pop rdi ; ret")
-            if g.instructions == ["pop rdi", "ret"]]
+    hits = [
+        g
+        for g in search_gadgets(gadgets, "pop rdi ; ret")
+        if g.instructions == ["pop rdi", "ret"]
+    ]
     assert hits, "pop rdi ; ret 가젯을 찾지 못함"
 
 

@@ -6,7 +6,9 @@ import pytest
 
 from pwnable_lab.challenge.models import _normalize
 from pwnable_lab.challenge.registry import (
-    get_challenge, get_registry, list_challenges,
+    get_challenge,
+    get_registry,
+    list_challenges,
 )
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.errors import NotFoundError
@@ -85,9 +87,7 @@ def test_challenge_detail_and_artifact(client):
 
 def test_challenge_submit_wrong_then_correct_and_updates_stats(client):
     challenge = get_challenge("ret2win")
-    wrong = client.post(
-        "/api/challenges/ret2win/submit", json={"answer": "0xdeadbeef"}
-    )
+    wrong = client.post("/api/challenges/ret2win/submit", json={"answer": "0xdeadbeef"})
     assert wrong.status_code == 200
     assert wrong.json() == {
         "correct": False,

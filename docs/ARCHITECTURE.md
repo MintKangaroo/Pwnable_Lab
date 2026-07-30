@@ -1,80 +1,141 @@
-# Pwnable Lab 아키텍처
+# PwnPilot 아키텍처
 
-## 설계 목표
-
-Pwnable Lab은 바이너리 익스플로잇을 공부할 때 반복되는 세 가지 작업을 한곳에 모읍니다.
-
-1. ELF의 구조와 완화 기법을 정적으로 확인한다.
-2. 공격 표면과 ROP 재료를 찾아 페이로드를 조립한다.
-3. 동일한 도구로 결정론적 실습 바이너리를 풀고 서버에서 채점한다.
-
-업로드한 바이너리를 실행하는 기능은 의도적으로 없습니다. 파서가 받는 모든 바이트는
-신뢰할 수 없는 입력이며, 업로드 크기와 모든 고비용 분석에 상한을 둡니다.
-
-## 구성
+## 현재 Phase 1 구성
 
 ```text
-Browser / React
-       │
-       │ /api
-       ▼
-FastAPI routes ────── payload tools
-       │              (cyclic, pack, overflow, shellcode catalog)
-       │
-       ├── AnalysisService
-       │      ├── ELF parser (pyelftools → normalized dataclasses)
-       │      ├── checksec / dangerous-symbol scan
-       │      ├── Capstone disassembly / ROP gadget scan
-       │      └── strings / GOT·PLT / hex view
-       │
-       ├── Challenge registry
-       │      └── six seeded ELF generators + constant-time verifier
-       │
-       └── BinaryRepository
-              ├── SQLite metadata and submission counters
-              └── SHA-256-addressed binary storage
+Browser
+  └── React + TypeScript + TanStack Query + URL Router
+        │ /api/v1
+        ▼
+FastAPI Control Plane
+  ├── Artifact intake service
+  │   ├── bounded chunk reads
+  │   ├── temporary file + SHA-256
+  │   ├── ELF structure validation
+  │   └── atomic content-addressed commit
+  ├── BinaryRepository
+  │   ├── BinaryRecord
+  │   ├── AnalysisJobRecord
+  │   └── AuditLogRecord
+  ├── InlineAnalysisJobQueue (development only)
+  └── Existing static analysis core
+      ├── normalized ELF parser
+      ├── checksec / symbol heuristic
+      ├── Capstone disassembly / gadgets
+      └── strings / GOT·PLT / hex
+        │
+        ├── SQLite (local)
+        └── PostgreSQL + Alembic (Compose)
 ```
 
-의존 방향은 HTTP 계층에서 도메인 코어 쪽으로만 흐릅니다. 분석기, ELF 빌더, 문제 생성기,
-페이로드 모듈은 FastAPI나 SQLAlchemy를 import하지 않습니다.
+API는 업로드 바이너리를 실행하지 않는다. Phase 1 queue의 `running`은 pyelftools/Capstone
+정적 분석만 의미한다.
 
-## ELF 처리
+## 의존 방향
 
-`elf/parser.py`는 pyelftools 결과를 `ElfImage`, `SectionInfo`, `SymbolInfo`,
-`SegmentInfo`로 정규화합니다. 이후 분석 모듈은 원본 라이브러리 객체 대신 이 값 타입만
-사용합니다.
+- HTTP route는 service/job/repository를 호출한다.
+- analyzer와 ELF domain은 FastAPI/SQLAlchemy를 import하지 않는다.
+- repository는 DB record와 content-addressed file lifecycle을 담당한다.
+- upload stream 처리는 artifact storage abstraction이 담당한다.
+- 프런트엔드는 `/api/v1` typed client를 통해서만 backend data를 읽는다.
 
-- checksec: 프로그램 헤더, 동적 태그, 심볼을 조합해 RELRO/Canary/NX/PIE 등을 판정
-- gadget finder: 실행 섹션의 `ret` 바이트에서 역방향으로 디코딩해 유효한 명령 경계만 수집
-- disassembler: `.text` 범위 안의 주소만 허용하며 x86/x86-64를 Capstone으로 디코딩
-- dangerous-symbol scan: 정적/동적 심볼의 알려진 위험 함수를 심각도순으로 분류
-- GOT/PLT: 링크 섹션과 정의되지 않은 동적 심볼을 정리
+기존 `analyzer/`, `elf/`, `payload/`, `challenge/` 모듈은 검증된 정적 분석 코어로
+재사용한다. 목표 구조로의 이동은 기능별 adapter와 회귀 테스트를 추가한 뒤 수행한다.
 
-## 문제 생성
+## Artifact intake
 
-각 문제 생성기는 슬러그에서 파생한 고정 시드로 최소 ELF64 아티팩트를 만듭니다. 따라서
-서버를 재시작하거나 여러 프로세스를 띄워도 아티팩트와 정답이 같습니다. 공개 응답에는
-정답과 풀이가 직렬화되지 않으며, 정답 제출 뒤 서버에서 `hmac.compare_digest`로 비교합니다.
+```text
+UploadFile
+  → read 1 MiB chunk
+  → cumulative 32 MiB limit
+  → write mode 0600 temporary file
+  → incremental SHA-256
+  → fsync
+  → read/parse ELF structure
+  → atomic hard-link to storage/{sha256}
+  → remove temporary name
+  → insert/reuse DB metadata
+```
 
-합성 ELF는 실제 실행을 목적으로 하지 않습니다. pyelftools와 Capstone이 해석할 수 있는
-정적 학습 아티팩트입니다.
+- Content-Length와 MIME을 신뢰하지 않는다.
+- 사용자 파일명은 저장 경로에 사용하지 않는다.
+- path separator, NUL/control characters를 제거한 basename만 표시한다.
+- 같은 SHA의 기존 파일은 덮어쓰지 않는다.
+- parser/size 실패 시 임시 파일을 제거한다.
 
-## 데이터와 신뢰 경계
+## API versioning
 
-- 파일은 원래 이름이 아니라 SHA-256 해시로 저장합니다.
-- 업로드 스트림은 `max_upload_bytes + 1`까지만 읽어 전체 메모리 적재를 막습니다.
-- 사용자 파일명은 경로 구성에 쓰지 않으며 메타데이터 저장 전에 basename으로 정리합니다.
-- 디스어셈블 명령 수, 가젯 수/깊이, 문자열 수, hex 페이지, cyclic 길이에 각각 상한이 있습니다.
-- 외부 명령 실행, 셸 호출, 업로드 파일 실행은 없습니다.
+`/api/v1`이 기본 계약이다. 기존 `/api`는 Phase 1 호환 경로로 같은 router를 mount한다.
+새 프런트엔드는 `/api/v1`만 사용한다.
 
-## 영속성
+주요 lifecycle:
 
-SQLite는 업로드 메타데이터와 문제 제출 통계만 보관합니다. 바이너리 바이트는 파일 시스템의
-content-addressed storage에 저장합니다. 동일 파일 재업로드는 기존 레코드와 바이트를
-재사용합니다.
+```text
+POST /binaries
+  → not_started
+POST /binaries/:id/analyze
+  → queued → running → completed | failed
+GET /binaries/:id/analysis
+  → latest job + verified result provenance
+DELETE /binaries/:id
+  → jobs/record delete → stored bytes delete → audit retained
+```
 
-## 배포
+Phase 1 inline queue는 요청 안에서 완료되므로 API 응답 시점에는 보통 terminal state다.
+후속 Redis worker는 같은 상태 계약을 비동기적으로 갱신한다.
 
-로컬 개발에서는 Vite가 `/api`를 FastAPI로 프록시합니다. Docker Compose에서는 Nginx가
-React 정적 빌드와 `/api` 리버스 프록시를 담당하고, 백엔드는 비루트 사용자로 실행됩니다.
-SQLite와 업로드 파일은 `pwnable-data` 볼륨에 유지됩니다.
+## DB와 migration
+
+- 개발 기본: SQLite, `PLAB_AUTO_CREATE_SCHEMA=true`
+- migration/Compose: Alembic, `PLAB_AUTO_CREATE_SCHEMA=false`
+- Compose 기본: PostgreSQL 17
+- Redis는 후속 worker를 위한 service foundation이며 Phase 1 inline queue가 사용하지 않는다.
+
+첫 migration은 새 DB schema를 만들고 migration 이전 `binaries/submissions` SQLite도
+새 column/table로 업그레이드한다.
+
+## 프런트엔드
+
+Phase 1 우선 화면:
+
+- Dashboard: recent workspaces, analysis queue, 실제 symbol finding 후보
+- Binary Workspace: URL tab, binary identity, analysis status, protection context
+- 기존 Disassembly/ROP/Symbols/Strings/GOT/Hex 분석 view
+- Payload Studio와 교육용 Challenges
+
+정보 구조와 디자인 규약은
+[`INFORMATION_ARCHITECTURE.md`](INFORMATION_ARCHITECTURE.md),
+[`DESIGN_SYSTEM.md`](DESIGN_SYSTEM.md),
+[`DASHBOARD_SPEC.md`](DASHBOARD_SPEC.md)에 정의한다.
+
+## 신뢰 경계
+
+### 현재
+
+- Browser ↔ FastAPI: 신뢰하지 않는 입력
+- FastAPI ↔ parser: 신뢰하지 않는 ELF bytes
+- FastAPI ↔ storage: application-owned content-addressed directory
+- FastAPI ↔ DB: parameterized SQLAlchemy operations
+
+### 후속 동적 분석
+
+```text
+FastAPI Control Plane
+  → queue/session manager
+  → separate sandbox orchestrator
+  → disposable non-networked worker
+```
+
+운영에서 backend에 Docker socket을 제공하지 않는다. sandbox worker는 read-only root,
+non-root, cap drop, seccomp, no-new-privileges, PID/CPU/memory/file/time/output limits를
+중첩 적용한다.
+
+## 현재 한계
+
+- 사용자 인증/tenant ownership/rate limit이 없다.
+- inline queue는 프로세스 장애 복구/취소/heartbeat를 제공하지 않는다.
+- 분석 parser는 아직 별도 static worker process로 격리되지 않았다.
+- 동적 분석과 exploit 실행은 구현되지 않았다.
+- 위험 함수 탐지는 symbol heuristic이며 취약점 확정이 아니다.
+
+따라서 Phase 1을 공개 인터넷 운영 서비스로 노출하지 않는다.

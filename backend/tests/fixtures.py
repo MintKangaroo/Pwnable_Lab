@@ -17,7 +17,10 @@ def sample_elf(**overrides) -> bytes:
             Symbol("win", ".text", len(sub_rsp(0x20)), 2),
             Symbol("gets", ".text", 0, 0),
         ],
-        pie=False, nx=True, relro="partial", canary=False,
+        pie=False,
+        nx=True,
+        relro="partial",
+        canary=False,
     )
     kwargs.update(overrides)
     return ElfBuilder(**kwargs).build()

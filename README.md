@@ -1,109 +1,92 @@
 <div align="center">
 
-# Pwnable Lab
+# PwnPilot
 
-**바이너리 익스플로잇 · 시스템 해킹 학습용 웹 플랫폼**
-
-ELF를 업로드해 보호 기법과 공격 표면을 분석하고, ROP 가젯을 찾고, 페이로드를 조립하고,
-실제 정적 바이너리 문제를 풀어봅니다.
+**교육·CTF·허가된 바이너리를 위한 웹 기반 Pwnable 분석 워크스페이스**
 
 [![CI](https://github.com/MintKangaroo/Pwnable_Lab/actions/workflows/ci.yml/badge.svg)](https://github.com/MintKangaroo/Pwnable_Lab/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![Tests](https://img.shields.io/badge/tests-57%20passing-79f2a6)
-![Coverage](https://img.shields.io/badge/coverage-97%25-79f2a6)
+![Coverage](https://img.shields.io/badge/coverage-%E2%89%A590%25-55b986)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
 
----
+PwnPilot은 ELF 구조와 보호 기법, 공격 표면, 디스어셈블리, ROP 재료를 한 Workspace에서
+검토하는 교육용 분석 플랫폼입니다. 현재 Phase 1 기반과 기존 정적 분석 기능이 동작합니다.
+업로드한 바이너리는 웹/API 호스트에서 실행하지 않습니다.
 
-## 화면
+> 교육용 CTF, 사용자가 소유한 바이너리, 명시적으로 허가받은 보안 분석에만 사용하세요.
+> 임의 인터넷 표적 탐색, 스캔, 대량 공격 기능은 프로젝트 범위가 아닙니다.
 
-### Binary Lab
+![PwnPilot Phase 1 Dashboard](docs/screenshots/05-dashboard-phase1.png)
 
-업로드한 ELF의 아키텍처·진입점·세그먼트와 RELRO, Canary, NX, PIE, Fortify를 한 화면에
-정리합니다. 알려진 위험 함수는 심각도와 취약점 종류별로 분류합니다.
+## 현재 구현 범위
 
-![Binary analysis overview](docs/screenshots/02-analysis.png)
+### Phase 1 foundation
 
-### Payload Studio
+- `/api/v1` FastAPI control plane과 기존 `/api` 호환 경로
+- 32MiB 기본 상한의 청크 기반 업로드
+- SHA-256 콘텐츠 주소 저장, deduplication, 원자적 파일 채택
+- ELF magic/구조 검증, 안전한 표시 파일명, path traversal 방어
+- 바이너리 목록/상세/삭제 API
+- 개발용 인라인 정적 분석 작업과 `queued/running/completed/failed` 상태 API
+- SQLAlchemy 2, SQLite 개발 모드, PostgreSQL Compose 모드
+- 기존 DB도 업그레이드할 수 있는 Alembic migration
+- React TypeScript 진입점, TanStack Query, URL 기반 Workspace
+- 실제 API를 사용하는 Dashboard와 Binary Context Header
+- 의미 기반 dark theme 토큰과 loading/empty/error 상태
 
-De Bruijn cyclic 패턴과 크래시 오프셋 검색, p32/p64 정수 패킹, 오버플로우·ROP 체인
-조립, 교육용 셸코드 카탈로그를 제공합니다.
+### 재사용된 정적 분석 기능
 
-![Payload Studio](docs/screenshots/04-payload-studio.png)
-
-### Exploit Challenges
-
-난이도·카테고리·힌트·다운로드 가능한 ELF 아티팩트와 서버측 정답 검증을 갖춘 6개 문제를
-포함합니다.
-
-![Exploit challenges](docs/screenshots/03-challenges.png)
-
----
-
-## 주요 기능
-
-### ELF 정적 분석
-
-| 분석 | 내용 |
+| 분석 | 현재 내용 |
 |---|---|
-| **Header / Sections / Segments** | 비트 수, 엔디언, 머신, ELF 타입, 진입점, 권한과 주소 |
-| **Checksec** | RELRO, Stack Canary, NX, PIE, RPATH, RUNPATH, Fortify, stripped |
-| **Attack Surface** | `gets`, `strcpy`, `printf`, `system`, `free` 등 위험 심볼 분류 |
-| **Disassembly** | Capstone 기반 x86/x86-64 선형 디스어셈블 |
-| **ROP Gadgets** | 실행 섹션의 `ret` 종결 가젯 탐색과 명령 부분 검색 |
-| **Symbols / Strings** | 정적·동적 심볼, ASCII·UTF-16LE 문자열 검색 |
-| **GOT / PLT** | 링크 섹션 주소·권한과 정의되지 않은 동적 임포트 |
-| **Hex View** | 파일 전체를 보내지 않는 512바이트 페이지 뷰 |
+| ELF | bits, endian, machine, type, entry, sections, segments, symbols |
+| Checksec | RELRO, Canary, NX, PIE, RPATH, RUNPATH, Fortify, stripped |
+| Attack surface | 위험 symbol 기반 후보 분류; 취약점 확정으로 표시하지 않음 |
+| Disassembly | Capstone 기반 x86/x86-64 선형 디스어셈블 |
+| ROP | 실행 section의 짧은 `ret` 가젯 검색 |
+| Strings | ASCII, UTF-16LE |
+| GOT/PLT | 관련 section과 undefined dynamic import |
+| Hex | 서버 pagination 기반 512-byte page |
+| Payload tools | cyclic, cyclic find, p32/p64, overflow layout |
+| Learning fixtures | 결정론적 교육용 정적 ELF 문제 6종 |
 
-### 페이로드 도구
+Binary Workspace를 포함한 화면은 [`docs/screenshots/`](docs/screenshots)에 있습니다.
 
-- pwntools와 같은 De Bruijn `cyclic` / `cyclic_find`
-- 32/64비트 little·big endian 정수 패킹
-- `[padding][return target][ROP chain…]` 페이로드 생성과 hexdump
-- amd64/i386 syscall 셸코드 정적 참조 카탈로그
+## 기술 스택
 
-### 실습 문제
+- Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic
+- Database: SQLite 또는 PostgreSQL
+- Queue: Phase 1 인라인 정적 분석 큐; Redis worker는 후속 Phase
+- Analysis: pyelftools, Capstone
+- Frontend: React 19, TypeScript, Vite, TanStack Query, React Router
+- Runtime: Docker Compose, Nginx
+- Quality: pytest, coverage, Ruff, Black, mypy 설정, TypeScript strict
 
-| Slug | 제목 | 난이도 | 연습 기술 |
-|---|---|---|---|
-| `ret2win` | Ret2Win | Easy | 심볼 테이블, No PIE 주소 |
-| `offset-hunt` | Stack Offset | Easy | 프롤로그, 스택 프레임, cyclic |
-| `checksec-audit` | Checksec Audit | Easy | 완화 기법 판정 |
-| `gadget-hunt` | ROP Gadget | Medium | `pop rdi ; ret` 탐색 |
-| `format-flag` | Format String Leak | Medium | 문자열, 포맷 스트링 |
-| `rop-chain` | ROP Chain Reconstruction | Hard | 가젯, 심볼, XOR 데이터 복원 |
+## 빠른 시작
 
-각 문제는 슬러그 기반 고정 시드로 생성되므로 서버 재시작 뒤에도 바이너리와 정답이 같습니다.
-정답과 풀이는 클라이언트 응답에 포함되지 않으며, 제출 값은 서버에서 상수 시간 비교합니다.
+### 요구사항
 
----
-
-## 시작하기
-
-### 요구 사항
-
-- Python 3.10+
+- Python 3.12 권장
 - Node.js 20.19+ 또는 22+
+- Docker Compose v2 (Compose 실행 시)
 
-### 백엔드
+### 로컬: SQLite + 인라인 큐
 
 ```bash
-cd backend
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+python -m pip install -e "./backend[dev]"
+
+cd backend
+cp .env.example .env
+alembic upgrade head
 uvicorn pwnable_lab.api.app:app --reload --port 8000
 ```
 
-API 문서는 [http://localhost:8000/api/docs](http://localhost:8000/api/docs)에서 볼 수 있습니다.
-설정은 `PLAB_` 접두사 환경변수로 바꿀 수 있으며 전체 예시는
-[`backend/.env.example`](backend/.env.example)에 있습니다.
-
-### 프런트엔드
+다른 터미널:
 
 ```bash
 cd frontend
@@ -111,146 +94,175 @@ npm ci
 npm run dev
 ```
 
-브라우저에서 [http://localhost:5173](http://localhost:5173)을 엽니다. 개발 서버는 `/api`를
-`127.0.0.1:8000`으로 프록시합니다. 다른 백엔드는 다음처럼 지정합니다.
+- UI: [http://localhost:5173](http://localhost:5173)
+- OpenAPI: [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs)
+
+### Docker Compose: PostgreSQL
+
+개발 기본에 가까운 production-build 구성:
 
 ```bash
-VITE_API_TARGET=http://host:8000 npm run dev
-```
-
-### Docker Compose
-
-```bash
+cp .env.example .env
+# .env의 POSTGRES_PASSWORD placeholder를 로컬 값으로 변경
 docker compose up --build
 ```
 
-[http://localhost:8080](http://localhost:8080)에서 Nginx 정적 프런트엔드와 FastAPI
-백엔드를 함께 사용합니다. SQLite DB와 업로드 파일은 `pwnable-data` 볼륨에 유지됩니다.
+UI는 [http://localhost:8080](http://localhost:8080)에서 열립니다.
 
----
-
-## API
-
-모든 경로는 `/api` 아래에 있습니다. 바이너리는 SHA-256으로 식별됩니다.
-
-| 메서드 | 경로 | 설명 |
-|---|---|---|
-| `GET` | `/health` | 상태와 버전 |
-| `POST` | `/binaries` | ELF 업로드 |
-| `GET` | `/binaries` | 업로드 목록 |
-| `GET` | `/binaries/{sha}/info` | 헤더·섹션·심볼·세그먼트 |
-| `GET` | `/binaries/{sha}/checksec` | 보호 기법 |
-| `GET` | `/binaries/{sha}/vulns` | 위험 함수 |
-| `GET` | `/binaries/{sha}/gadgets?q=` | ROP 가젯 |
-| `GET` | `/binaries/{sha}/got` | GOT/PLT와 임포트 |
-| `GET` | `/binaries/{sha}/strings` | 문자열 |
-| `GET` | `/binaries/{sha}/disassembly` | 디스어셈블리 |
-| `GET` | `/binaries/{sha}/hex?page=` | 페이지 단위 hex |
-| `POST` | `/payload/cyclic` | cyclic 패턴 |
-| `POST` | `/payload/cyclic/find` | cyclic 오프셋 |
-| `POST` | `/payload/pack` | 정수 패킹 |
-| `POST` | `/payload/overflow` | 페이로드 조립 |
-| `GET` | `/payload/shellcode` | 셸코드 카탈로그 |
-| `GET` | `/challenges` | 공개 문제 메타데이터 |
-| `GET` | `/challenges/{slug}/artifact` | 문제 ELF |
-| `POST` | `/challenges/{slug}/submit` | 정답 검증 |
-
-예시:
+소스 hot reload 개발 구성:
 
 ```bash
-SHA=$(curl -s -F file=@./target http://localhost:8000/api/binaries | jq -r .sha256)
-curl -s "http://localhost:8000/api/binaries/$SHA/checksec" | jq
-curl -s "http://localhost:8000/api/binaries/$SHA/gadgets?q=pop%20rdi" | jq
+docker compose -f docker-compose.dev.yml up --build
 ```
 
----
+- Vite: [http://localhost:5173](http://localhost:5173)
+- API: [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
 
-## 아키텍처
+운영 hardening overlay의 설정 검증:
 
-```text
- React UI  ──HTTP──▶  FastAPI
-                         │
-        ┌────────────────┼───────────────────┐
-        ▼                ▼                   ▼
-  ELF parser        Analysis core       Payload tools
-  (pyelftools)      checksec / scan      cyclic / pack
-        │            Capstone / ROP       overflow / catalog
-        │                │
-        └────────┬───────┘
-                 ▼
-       normalized ElfImage
-                 │
-        ┌────────┴──────────┐
-        ▼                   ▼
-  Challenge registry   Binary repository
-  6 seeded generators  SQLite + SHA-256 files
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 ```
 
-자세한 설계와 신뢰 경계는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), 단계별 사용법은
-[`docs/USAGE.md`](docs/USAGE.md)를 참고하세요.
+Phase 1의 Compose는 정적 분석 control plane입니다. 아직 sandbox-runner나 업로드 바이너리
+실행 기능을 포함하지 않습니다.
 
-## 프로젝트 구조
+## 주요 API
 
-```text
-Pwnable_Lab/
-├── backend/
-│   ├── pwnable_lab/
-│   │   ├── analyzer/       # checksec, disasm, gadgets, strings, vuln scan
-│   │   ├── api/            # FastAPI app, routes, schemas, services
-│   │   ├── challenge/      # 6개 문제 생성기와 채점
-│   │   ├── database/       # SQLAlchemy repository
-│   │   ├── elf/            # 정규화 파서와 최소 ELF 빌더
-│   │   └── payload/        # cyclic, pack, shellcode
-│   ├── tests/              # 57개 테스트
-│   └── pyproject.toml
-├── frontend/
-│   └── src/
-│       ├── components/     # Binary Lab, Payload Studio, Challenges
-│       ├── api.js
-│       └── styles.css
-├── docs/
-├── docker-compose.yml
-└── Makefile
+기본 prefix는 `/api/v1`입니다. `binary_id`는 Phase 1에서 SHA-256과 같습니다.
+
+| Method | Path | 설명 |
+|---|---|---|
+| `GET` | `/health` | API 상태와 버전 |
+| `POST` | `/binaries` | ELF 스트리밍 업로드 |
+| `GET` | `/binaries` | artifact 목록 |
+| `GET` | `/binaries/{binary_id}` | artifact 상세와 분석 상태 |
+| `DELETE` | `/binaries/{binary_id}` | artifact와 분석 작업 삭제 |
+| `POST` | `/binaries/{binary_id}/analyze` | Phase 1 정적 분석 작업 시작 |
+| `GET` | `/binaries/{binary_id}/analysis` | 최신 분석 작업 상태/결과 |
+| `GET` | `/binaries/{binary_id}/info` | ELF 정규화 정보 |
+| `GET` | `/binaries/{binary_id}/checksec` | 보호 기법 |
+| `GET` | `/binaries/{binary_id}/vulns` | 위험 symbol 후보 |
+| `GET` | `/binaries/{binary_id}/gadgets` | ROP 가젯 |
+| `GET` | `/binaries/{binary_id}/strings` | 문자열 |
+| `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
+| `GET` | `/binaries/{binary_id}/hex` | paginated hex |
+| `POST` | `/payload/cyclic` | cyclic pattern |
+| `POST` | `/payload/cyclic/find` | cyclic offset |
+| `POST` | `/payload/pack` | 정수 packing |
+
+예:
+
+```bash
+BINARY_ID=$(
+  curl -s -F file=@./target http://localhost:8000/api/v1/binaries |
+  jq -r .binary_id
+)
+curl -s -X POST \
+  "http://localhost:8000/api/v1/binaries/$BINARY_ID/analyze" | jq
+curl -s \
+  "http://localhost:8000/api/v1/binaries/$BINARY_ID/analysis" | jq
 ```
 
----
+## 설정
 
-## 테스트
+Backend 설정은 `PLAB_` prefix 환경변수로 관리합니다.
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `PLAB_MAX_UPLOAD_BYTES` | `33554432` | 업로드 상한 |
+| `PLAB_UPLOAD_CHUNK_BYTES` | `1048576` | intake read chunk |
+| `PLAB_STORAGE_DIR` | `./_storage` | content-addressed storage |
+| `PLAB_DATABASE_URL` | `sqlite:///./pwnable_lab.db` | SQLAlchemy URL |
+| `PLAB_AUTO_CREATE_SCHEMA` | `true` | 로컬 편의용 create_all; Compose는 false |
+| `PLAB_CORS_ORIGINS` | localhost Vite origins | 허용 origin JSON |
+
+실제 API key, 인증 secret, 외부 서버, 운영 domain, cloud credential은 예제 값으로도
+커밋하지 않습니다. [`.env.example`](.env.example)에는 placeholder만 있습니다.
+
+## 테스트와 품질 검사
 
 ```bash
 cd backend
-pytest
+black --check pwnable_lab tests migrations
+ruff check pwnable_lab tests migrations
+mypy pwnable_lab
 pytest --cov=pwnable_lab --cov-report=term-missing
 
 cd ../frontend
 npm ci
+npm audit --audit-level=high
+npm run lint
+npm run typecheck
 npm run build
-npm audit
+npm run e2e
+
+cd ..
+docker compose config
+docker compose -f docker-compose.dev.yml config
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 ```
 
-현재 결과:
+핵심 backend coverage gate는 90%입니다. CI는 Black, Ruff, mypy, pytest/coverage,
+ESLint, Prettier, TypeScript, production build, npm high-severity audit와 Playwright
+핵심 플로우를 실행합니다.
 
-- 백엔드 **57 tests passing**
-- Python 분석 코어·API **97% statement coverage**
-- React 프로덕션 빌드 성공
-- npm audit **0 vulnerabilities**
+## 구조
 
-GitHub Actions가 push와 pull request마다 백엔드 테스트·커버리지, 프런트엔드 빌드·감사를
-실행합니다.
+```text
+Pwnable_Lab/
+├── backend/
+│   ├── migrations/                 # Alembic
+│   ├── pwnable_lab/
+│   │   ├── artifacts/              # streaming + atomic SHA storage
+│   │   ├── analyzer/               # 기존 정적 분석 코어
+│   │   ├── api/                    # /api/v1 control plane
+│   │   ├── challenge/              # 교육용 fixture
+│   │   ├── database/               # models/repository/session
+│   │   ├── elf/                    # parser/builder
+│   │   ├── jobs/                   # Phase 1 inline queue abstraction
+│   │   └── payload/
+│   └── tests/
+├── frontend/
+│   └── src/
+│       ├── App.tsx                 # AppShell, Dashboard, routes
+│       ├── api.ts                  # typed /api/v1 client
+│       └── components/
+├── docs/
+├── docker-compose.yml
+├── docker-compose.dev.yml
+└── docker-compose.prod.yml
+```
 
-## 보안 설계와 한계
+전체 목표 구조와 Phase별 경계는
+[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md), 정보 구조와 디자인 규약은
+[`docs/INFORMATION_ARCHITECTURE.md`](docs/INFORMATION_ARCHITECTURE.md) 및
+[`docs/DESIGN_SYSTEM.md`](docs/DESIGN_SYSTEM.md)를 참고하세요.
 
-- 업로드 파일을 **절대 실행하지 않는** 정적 분석 전용 구조
-- 스트리밍 업로드 상한(기본 16 MiB)과 ELF 매직 화이트리스트
-- 디스어셈블 명령 수, 가젯 수/깊이, 문자열 수, hex 페이지, cyclic 길이 제한
-- 바이너리를 사용자 파일명 대신 SHA-256으로 저장해 경로 조작 차단
-- 중복 파일을 원자적으로 재사용하며 정답은 서버에서만 보관
-- ELF 헤더 분석은 여러 아키텍처에 적용할 수 있지만 디스어셈블·ROP는 현재 x86/x86-64 전용
-- 위험 함수 탐지는 심볼 기반 휴리스틱이며 취약점 존재 여부를 확정하지 않음
-- 합성 문제 ELF는 정적 분석 학습 아티팩트이며 운영체제에서 실행하는 용도가 아님
+## 보안 제한
 
-> 이 프로젝트는 교육, CTF, 소유한 시스템 또는 명시적으로 허가받은 보안 테스트를 위한
-> 도구입니다. 허가 없이 타인의 시스템을 공격하는 데 사용하지 마세요.
+- 업로드 파일은 backend 호스트에서 실행하지 않습니다.
+- MIME이나 사용자 파일명을 저장 경로로 신뢰하지 않습니다.
+- 32MiB 누적 크기와 1MiB read chunk를 서버에서 강제합니다.
+- 검증 전 임시 파일은 실패 시 제거하고, 검증 후 SHA-256 이름으로 원자적으로 채택합니다.
+- Phase 1 위험 함수 결과는 symbol heuristic이며 취약점을 확정하지 않습니다.
+- 인증/사용자별 ownership/rate limit이 아직 없으므로 Phase 1을 공개 인터넷에 노출하지
+  마세요.
+- 동적 분석은 network-disabled disposable sandbox가 완성되는 Phase 6 전에는 제공하지
+  않습니다.
+- Docker socket을 backend에 마운트하는 구조는 운영 설계로 사용하지 않습니다.
+
+## 로드맵
+
+- Phase 2: 정적 ELF/checksec/GOT/PLT/relocation/evidence 고도화
+- Phase 3: 함수/CFG/xref/고급 gadget과 ROP Studio
+- Phase 4: core/GDB log/stack/memory/crash 분석
+- Phase 5: 근거 기반 exploit strategy와 pwntools draft
+- Phase 6A: 비대화형 disposable sandbox
+- Phase 6B: GDB/MI와 WebSocket interactive debugger
+- Phase 6C: packing/UPX/obfuscation/runtime strings
+- Phase 6D: QEMU/rr/OEP/reconstruction assistance
+- Phase 7: privacy-controlled LLM provider abstraction
 
 ## 라이선스
 

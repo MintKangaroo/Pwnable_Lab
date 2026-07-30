@@ -157,20 +157,69 @@ class ElfBuilder:
 
         # --- 섹션 헤더 6개 (null, .text, .rodata, .shstrtab, .symtab, .strtab) ---
         shstrtab_idx = 3
-        symtab_idx = 4
         strtab_idx = 5
         sections = [
             _sh(0, SHT_NULL, 0, 0, 0, 0, 0, 0, 0, 0),
-            _sh(sh_name_off[".text"], SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR,
-                text_vaddr, text_off, len(self.text), 0, 0, 16, 0),
-            _sh(sh_name_off[".rodata"], SHT_PROGBITS, SHF_ALLOC,
-                rodata_vaddr, rodata_off, len(self.rodata), 0, 0, 16, 0),
-            _sh(sh_name_off[".shstrtab"], SHT_STRTAB, 0, 0, shstrtab_off,
-                len(shstrtab), 0, 0, 1, 0),
-            _sh(sh_name_off[".symtab"], SHT_SYMTAB, 0, 0, symtab_off,
-                len(symtab_bytes), strtab_idx, first_global, 8, 24),
-            _sh(sh_name_off[".strtab"], SHT_STRTAB, 0, 0, strtab_off,
-                len(sym_strtab_bytes), 0, 0, 1, 0),
+            _sh(
+                sh_name_off[".text"],
+                SHT_PROGBITS,
+                SHF_ALLOC | SHF_EXECINSTR,
+                text_vaddr,
+                text_off,
+                len(self.text),
+                0,
+                0,
+                16,
+                0,
+            ),
+            _sh(
+                sh_name_off[".rodata"],
+                SHT_PROGBITS,
+                SHF_ALLOC,
+                rodata_vaddr,
+                rodata_off,
+                len(self.rodata),
+                0,
+                0,
+                16,
+                0,
+            ),
+            _sh(
+                sh_name_off[".shstrtab"],
+                SHT_STRTAB,
+                0,
+                0,
+                shstrtab_off,
+                len(shstrtab),
+                0,
+                0,
+                1,
+                0,
+            ),
+            _sh(
+                sh_name_off[".symtab"],
+                SHT_SYMTAB,
+                0,
+                0,
+                symtab_off,
+                len(symtab_bytes),
+                strtab_idx,
+                first_global,
+                8,
+                24,
+            ),
+            _sh(
+                sh_name_off[".strtab"],
+                SHT_STRTAB,
+                0,
+                0,
+                strtab_off,
+                len(sym_strtab_bytes),
+                0,
+                0,
+                1,
+                0,
+            ),
         ]
         shnum = len(sections)
 
@@ -183,17 +232,30 @@ class ElfBuilder:
         ]
         if self.relro != "none":
             phdr_list.append(
-                _ph(PT_GNU_RELRO, PF_R, rodata_off, rodata_vaddr, rodata_vaddr,
-                len(self.rodata) if self.relro != "none" else 0,
-                len(self.rodata) if self.relro != "none" else 0, 1)
+                _ph(
+                    PT_GNU_RELRO,
+                    PF_R,
+                    rodata_off,
+                    rodata_vaddr,
+                    rodata_vaddr,
+                    len(self.rodata) if self.relro != "none" else 0,
+                    len(self.rodata) if self.relro != "none" else 0,
+                    1,
+                )
             )
         phdrs = b"".join(phdr_list)
 
         # --- ELF 헤더 ---
         e_type = ET_DYN if self.pie else ET_EXEC
         ehdr = _elf_header(
-            e_type=e_type, entry=entry, phoff=phoff, shoff=shoff,
-            phentsize=phentsize, phnum=phnum, shnum=shnum, shstrndx=shstrtab_idx,
+            e_type=e_type,
+            entry=entry,
+            phoff=phoff,
+            shoff=shoff,
+            phentsize=phentsize,
+            phnum=phnum,
+            shnum=shnum,
+            shstrndx=shstrtab_idx,
         )
 
         # --- 조립 ---
@@ -233,28 +295,79 @@ def _build_strtab(names: list[str]) -> tuple[bytes, dict[str, int]]:
     return bytes(out), offsets
 
 
-def _elf_header(*, e_type: int, entry: int, phoff: int, shoff: int,
-                phentsize: int, phnum: int, shnum: int, shstrndx: int) -> bytes:
+def _elf_header(
+    *,
+    e_type: int,
+    entry: int,
+    phoff: int,
+    shoff: int,
+    phentsize: int,
+    phnum: int,
+    shnum: int,
+    shstrndx: int,
+) -> bytes:
     e_ident = b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\x00" * 8  # 64bit, LE, SysV
     return e_ident + struct.pack(
         "<HHIQQQIHHHHHH",
-        e_type, EM_X86_64, 1, entry, phoff, shoff, 0,
-        64, phentsize, phnum, 64, shnum, shstrndx,
+        e_type,
+        EM_X86_64,
+        1,
+        entry,
+        phoff,
+        shoff,
+        0,
+        64,
+        phentsize,
+        phnum,
+        64,
+        shnum,
+        shstrndx,
     )
 
 
-def _ph(p_type: int, flags: int, offset: int, vaddr: int, paddr: int,
-        filesz: int, memsz: int, align: int) -> bytes:
-    return struct.pack("<IIQQQQQQ", p_type, flags, offset, vaddr, paddr,
-                       filesz, memsz, align)
+def _ph(
+    p_type: int,
+    flags: int,
+    offset: int,
+    vaddr: int,
+    paddr: int,
+    filesz: int,
+    memsz: int,
+    align: int,
+) -> bytes:
+    return struct.pack(
+        "<IIQQQQQQ", p_type, flags, offset, vaddr, paddr, filesz, memsz, align
+    )
 
 
-def _sh(name: int, stype: int, flags: int, addr: int, offset: int, size: int,
-        link: int, info: int, align: int, entsize: int) -> bytes:
-    return struct.pack("<IIQQQQIIQQ", name, stype, flags, addr, offset, size,
-                       link, info, align, entsize)
+def _sh(
+    name: int,
+    stype: int,
+    flags: int,
+    addr: int,
+    offset: int,
+    size: int,
+    link: int,
+    info: int,
+    align: int,
+    entsize: int,
+) -> bytes:
+    return struct.pack(
+        "<IIQQQQIIQQ",
+        name,
+        stype,
+        flags,
+        addr,
+        offset,
+        size,
+        link,
+        info,
+        align,
+        entsize,
+    )
 
 
-def _pack_sym(name: int, info: int, other: int, shndx: int, value: int,
-              size: int) -> bytes:
+def _pack_sym(
+    name: int, info: int, other: int, shndx: int, value: int, size: int
+) -> bytes:
     return struct.pack("<IBBHQQ", name, info, other, shndx, value, size)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -18,12 +19,35 @@ class BinarySummary(BaseModel):
     size: int
     machine: str
     bits: int
+    analysis_status: str
+    created_at: datetime
+
+
+class BinaryDetail(BinarySummary):
+    updated_at: datetime
 
 
 class UploadResponse(BaseModel):
+    binary_id: str
     sha256: str
     filename: str
     size: int
+    analysis_status: str
+
+
+class AnalysisJobResponse(BaseModel):
+    job_id: str
+    binary_id: str
+    status: Literal["queued", "running", "completed", "failed"]
+    analyzer_name: str
+    analyzer_version: str
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+    confidence: float
+    evidence: list
+    result: dict | None
+    error: str | None
 
 
 # --- 페이로드 도구 ---

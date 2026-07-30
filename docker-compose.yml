@@ -1,14 +1,67 @@
+name: pwnpilot
+
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pwnpilot}
+      POSTGRES_USER: ${POSTGRES_USER:-pwnpilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-development-only-change-me}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    command:
+      - /bin/sh
+      - -c
+      - alembic upgrade head && exec uvicorn pwnable_lab.api.app:app --host 0.0.0.0 --port 8000
     environment:
-      PLAB_DATABASE_URL: sqlite:////data/pwnable_lab.db
+      PLAB_APP_NAME: PwnPilot
+      PLAB_ENVIRONMENT: compose
+      PLAB_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-pwnpilot}:${POSTGRES_PASSWORD:-development-only-change-me}@postgres:5432/${POSTGRES_DB:-pwnpilot}
+      PLAB_AUTO_CREATE_SCHEMA: "false"
       PLAB_STORAGE_DIR: /data/binaries
-      PLAB_CORS_ORIGINS: '["http://localhost:8080"]'
+      PLAB_MAX_UPLOAD_BYTES: "33554432"
+      PLAB_CORS_ORIGINS: '["http://localhost:${PWNPILOT_PORT:-8080}"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 12
     volumes:
-      - pwnable-data:/data
+      - artifact-data:/data
     restart: unless-stopped
 
   frontend:
@@ -16,10 +69,13 @@ services:
       context: .
       dockerfile: frontend/Dockerfile
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "${PLAB_PORT:-8080}:80"
+      - "${PWNPILOT_PORT:-8080}:80"
     restart: unless-stopped
 
 volumes:
-  pwnable-data:
+  artifact-data:
+  postgres-data:
+  redis-data:

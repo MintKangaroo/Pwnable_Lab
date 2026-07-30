@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from pwnable_lab.challenge.base import ChallengeGenerator, XOR_EAX_RET, sub_rsp
+from pwnable_lab.challenge.base import XOR_EAX_RET, ChallengeGenerator, sub_rsp
 from pwnable_lab.challenge.models import ChallengeMeta, GeneratedChallenge
 from pwnable_lab.elf.builder import ElfBuilder, Symbol
 
@@ -40,7 +40,10 @@ class OffsetHuntGenerator(ChallengeGenerator):
             text=text,
             rodata=b"input: ",
             symbols=[Symbol("vulnerable", ".text", 0, len(code))],
-            pie=False, nx=True, relro="partial", canary=False,
+            pie=False,
+            nx=True,
+            relro="partial",
+            canary=False,
         )
         data = image.build()
 

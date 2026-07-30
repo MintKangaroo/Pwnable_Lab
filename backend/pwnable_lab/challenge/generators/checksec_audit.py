@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from pwnable_lab.challenge.base import ChallengeGenerator, XOR_EAX_RET, sub_rsp
+from pwnable_lab.challenge.base import XOR_EAX_RET, ChallengeGenerator, sub_rsp
 from pwnable_lab.challenge.models import ChallengeMeta, GeneratedChallenge
 from pwnable_lab.elf.builder import ElfBuilder, Symbol
 
@@ -36,21 +36,27 @@ class ChecksecAuditGenerator(ChallengeGenerator):
         weakness = rng.choice(list(_WEAKNESS))
         code = sub_rsp(0x20) + XOR_EAX_RET
 
-        kwargs = dict(nx=True, pie=True, relro="full", canary=True)
+        nx = True
+        pie = True
+        relro = "full"
+        canary = True
         if weakness == "nx":
-            kwargs["nx"] = False
+            nx = False
         elif weakness == "pie":
-            kwargs["pie"] = False
+            pie = False
         elif weakness == "relro":
-            kwargs["relro"] = "none"
+            relro = "none"
         elif weakness == "canary":
-            kwargs["canary"] = False
+            canary = False
 
         image = ElfBuilder(
             text=code,
             rodata=b"audit me\x00",
             symbols=[Symbol("main", ".text", 0, len(code))],
-            **kwargs,
+            nx=nx,
+            pie=pie,
+            relro=relro,
+            canary=canary,
         )
         data = image.build()
 

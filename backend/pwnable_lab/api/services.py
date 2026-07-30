@@ -52,8 +52,12 @@ class AnalysisService:
         if query:
             gadgets = search_gadgets(gadgets, query)
         return [
-            {"address": g.address, "bytes_hex": g.bytes_hex,
-             "instructions": g.instructions, "text": g.text}
+            {
+                "address": g.address,
+                "bytes_hex": g.bytes_hex,
+                "instructions": g.instructions,
+                "text": g.text,
+            }
             for g in gadgets
         ]
 
@@ -68,12 +72,19 @@ class AnalysisService:
 
     def disassembly(self, data: bytes, address: int | None, count: int) -> list[dict]:
         insns = disassemble(
-            self.image(data), address=address, count=count,
+            self.image(data),
+            address=address,
+            count=count,
             max_instructions=self.settings.max_disasm_instructions,
         )
         return [
-            {"address": i.address, "mnemonic": i.mnemonic,
-             "op_str": i.op_str, "bytes_hex": i.bytes_hex, "text": i.text}
+            {
+                "address": i.address,
+                "mnemonic": i.mnemonic,
+                "op_str": i.op_str,
+                "bytes_hex": i.bytes_hex,
+                "text": i.text,
+            }
             for i in insns
         ]
 
@@ -84,11 +95,13 @@ class AnalysisService:
         rows = []
         for off in range(0, len(chunk), 16):
             row = chunk[off : off + 16]
-            rows.append({
-                "offset": start + off,
-                "hex": " ".join(f"{b:02x}" for b in row),
-                "ascii": "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row),
-            })
+            rows.append(
+                {
+                    "offset": start + off,
+                    "hex": " ".join(f"{b:02x}" for b in row),
+                    "ascii": "".join(chr(b) if 0x20 <= b < 0x7F else "." for b in row),
+                }
+            )
         return {
             "page": page,
             "page_size": size,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from pwnable_lab.challenge.base import ChallengeGenerator, XOR_EAX_RET, sub_rsp
+from pwnable_lab.challenge.base import XOR_EAX_RET, ChallengeGenerator, sub_rsp
 from pwnable_lab.challenge.models import ChallengeMeta, GeneratedChallenge
 from pwnable_lab.elf.builder import ElfBuilder, Symbol
 
@@ -33,10 +33,7 @@ class FormatFlagGenerator(ChallengeGenerator):
         # 플래그를 다른 문자열들 사이에 숨긴다
         rodata = (
             b"Enter your name: \x00"
-            b"%s\x00"
-            + b"Hello, \x00"
-            + flag.encode() + b"\x00"
-            + b"Goodbye\x00"
+            b"%s\x00" + b"Hello, \x00" + flag.encode() + b"\x00" + b"Goodbye\x00"
         )
         code = sub_rsp(0x28) + XOR_EAX_RET
 
@@ -47,7 +44,10 @@ class FormatFlagGenerator(ChallengeGenerator):
                 Symbol("main", ".text", 0, len(code)),
                 Symbol("printf", ".text", 0, 0),  # 임포트 표식
             ],
-            pie=False, nx=True, relro="partial", canary=True,
+            pie=False,
+            nx=True,
+            relro="partial",
+            canary=True,
         )
         data = image.build()
 

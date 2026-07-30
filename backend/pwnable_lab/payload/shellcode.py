@@ -40,15 +40,14 @@ class Shellcode:
 _CATALOG: list[Shellcode] = [
     Shellcode(
         slug="amd64-execve-sh",
-        title="execve(\"/bin/sh\", NULL, NULL)",
+        title='execve("/bin/sh", NULL, NULL)',
         arch="amd64",
         description="가장 표준적인 x86-64 셸 스폰 셸코드(널바이트 없음).",
-        bytes_hex="31c048bb2f62696e2f2f7368534889e7"
-        "31f631d26a3b580f05",
+        bytes_hex="31c048bb2f62696e2f2f7368534889e7" "31f631d26a3b580f05",
     ),
     Shellcode(
         slug="i386-execve-sh",
-        title="execve(\"/bin/sh\", NULL, NULL) — 32bit",
+        title='execve("/bin/sh", NULL, NULL) — 32bit',
         arch="i386",
         description="고전적인 25바이트 int 0x80 셸코드.",
         bytes_hex="31c050682f2f7368682f62696e89e3505389e131d2b00bcd80",

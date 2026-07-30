@@ -5,7 +5,12 @@ from __future__ import annotations
 import random
 
 from pwnable_lab.challenge.base import (
-    ChallengeGenerator, POP_RDI_RET, POP_RSI_R15_RET, RET, XOR_EAX_RET, sub_rsp,
+    POP_RDI_RET,
+    POP_RSI_R15_RET,
+    RET,
+    XOR_EAX_RET,
+    ChallengeGenerator,
+    sub_rsp,
 )
 from pwnable_lab.challenge.models import ChallengeMeta, GeneratedChallenge
 from pwnable_lab.elf.builder import ElfBuilder, Symbol
@@ -40,7 +45,8 @@ class RopChainGenerator(ChallengeGenerator):
             b"ROP chain target: system()\x00"
             + f"key=0x{key:02x}\x00".encode()
             + b"payload:\x00"
-            + encoded + b"\x00"
+            + encoded
+            + b"\x00"
             + b"end\x00"
         )
         # pop rdi; ret 가젯과 system 심볼 배치
@@ -52,7 +58,10 @@ class RopChainGenerator(ChallengeGenerator):
                 Symbol("main", ".text", 0, len(code)),
                 Symbol("system", ".text", 0, 0),  # 외부 함수 표식
             ],
-            pie=False, nx=True, relro="partial", canary=True,
+            pie=False,
+            nx=True,
+            relro="partial",
+            canary=True,
         )
         data = image.build()
 

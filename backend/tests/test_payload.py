@@ -6,7 +6,13 @@ import pytest
 
 from pwnable_lab.payload.cyclic import cyclic, cyclic_find
 from pwnable_lab.payload.pack import (
-    RopStep, build_overflow, hexdump_payload, p32, p64, u32, u64,
+    RopStep,
+    build_overflow,
+    hexdump_payload,
+    p32,
+    p64,
+    u32,
+    u64,
 )
 from pwnable_lab.payload.shellcode import get_shellcode, list_shellcode
 
@@ -101,15 +107,17 @@ def test_payload_api_pack_and_overflow(client):
 
 
 def test_payload_api_validates_inputs(client):
-    assert client.post(
-        "/api/payload/pack", json={"value": 1, "bits": 16, "endian": "little"}
-    ).status_code == 422
-    assert client.post(
-        "/api/payload/cyclic", json={"length": 65537, "n": 4}
-    ).status_code == 422
-    bad_find = client.post(
-        "/api/payload/cyclic/find", json={"value": "x", "n": 4}
+    assert (
+        client.post(
+            "/api/payload/pack", json={"value": 1, "bits": 16, "endian": "little"}
+        ).status_code
+        == 422
     )
+    assert (
+        client.post("/api/payload/cyclic", json={"length": 65537, "n": 4}).status_code
+        == 422
+    )
+    bad_find = client.post("/api/payload/cyclic/find", json={"value": "x", "n": 4})
     assert bad_find.status_code == 400
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass
+from typing import cast
 
 
 def p64(value: int, endian: str = "little") -> bytes:
@@ -18,12 +19,12 @@ def p32(value: int, endian: str = "little") -> bytes:
 
 def u64(data: bytes, endian: str = "little") -> int:
     fmt = "<Q" if endian == "little" else ">Q"
-    return struct.unpack(fmt, data.ljust(8, b"\x00")[:8])[0]
+    return cast(int, struct.unpack(fmt, data.ljust(8, b"\x00")[:8])[0])
 
 
 def u32(data: bytes, endian: str = "little") -> int:
     fmt = "<I" if endian == "little" else ">I"
-    return struct.unpack(fmt, data.ljust(4, b"\x00")[:4])[0]
+    return cast(int, struct.unpack(fmt, data.ljust(4, b"\x00")[:4])[0])
 
 
 @dataclass
@@ -34,8 +35,14 @@ class RopStep:
     comment: str = ""
 
 
-def build_overflow(padding: int, target: int, *, bits: int = 64,
-                   fill: bytes = b"A", chain: list[RopStep] | None = None) -> bytes:
+def build_overflow(
+    padding: int,
+    target: int,
+    *,
+    bits: int = 64,
+    fill: bytes = b"A",
+    chain: list[RopStep] | None = None,
+) -> bytes:
     """단순 반환주소 덮어쓰기 페이로드를 만든다.
 
     ``[fill * padding][target][chain...]`` 형태.

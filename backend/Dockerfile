@@ -8,6 +8,8 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/requirements.txt ./
 COPY backend/setup.py ./
 COPY backend/pwnable_lab ./pwnable_lab
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/migrations ./migrations
 
 RUN pip install --no-cache-dir .
 

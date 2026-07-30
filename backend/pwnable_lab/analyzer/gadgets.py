@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from capstone import CS_ARCH_X86, CS_MODE_32, CS_MODE_64, Cs
+from capstone import (  # type: ignore[import-untyped]
+    CS_ARCH_X86,
+    CS_MODE_32,
+    CS_MODE_64,
+    Cs,
+)
 
 from pwnable_lab.elf.parser import ElfImage
 from pwnable_lab.errors import AnalysisError
@@ -41,8 +46,9 @@ def _make_cs(image: ElfImage) -> Cs:
     return md
 
 
-def find_gadgets(image: ElfImage, *, max_gadgets: int = 2000,
-                 max_depth: int = 5) -> list[Gadget]:
+def find_gadgets(
+    image: ElfImage, *, max_gadgets: int = 2000, max_depth: int = 5
+) -> list[Gadget]:
     """실행 섹션에서 ROP 가젯을 수집한다.
 
     Parameters
@@ -62,7 +68,6 @@ def find_gadgets(image: ElfImage, *, max_gadgets: int = 2000,
         for i, byte in enumerate(blob):
             if byte != _RET:
                 continue
-            ret_addr = base + i
             # ret 앞의 여러 시작점에서 디스어셈블 시도
             for start in range(max(0, i - _MAX_BACK), i + 1):
                 gadget = _decode_gadget(md, blob, start, i, base, max_depth)
@@ -73,12 +78,12 @@ def find_gadgets(image: ElfImage, *, max_gadgets: int = 2000,
     return _sorted(seen)
 
 
-def _decode_gadget(md: Cs, blob: bytes, start: int, ret_index: int, base: int,
-                   max_depth: int) -> Gadget | None:
+def _decode_gadget(
+    md: Cs, blob: bytes, start: int, ret_index: int, base: int, max_depth: int
+) -> Gadget | None:
     end = ret_index + 1
     code = blob[start:end]
     insns: list[str] = []
-    pos = base + start
     consumed = 0
     for insn in md.disasm(code, base + start):
         text = insn.mnemonic if not insn.op_str else f"{insn.mnemonic} {insn.op_str}"

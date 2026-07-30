@@ -1,69 +1,113 @@
-# 사용 가이드
+# PwnPilot 사용 가이드
 
-## Binary Lab
+## Dashboard
 
-ELF 파일을 좌측 업로드 영역에 놓으면 SHA-256으로 저장한 뒤 분석 화면이 열립니다.
+Dashboard는 실제 API에서 다음을 표시한다.
 
-- **Overview**: ELF 타입, 아키텍처, 진입점, 메모리 세그먼트와 checksec 결과
-- **Disassembly**: 진입점부터 최대 500개 명령을 선형 디스어셈블
-- **ROP Gadgets**: 실행 섹션의 `ret` 가젯 목록과 부분 문자열 검색
-- **Symbols**: 정적·동적 심볼 통합 검색
-- **Strings**: ASCII/UTF-16LE 문자열 추출과 최소 길이 필터
-- **GOT / PLT**: 링크 섹션 권한과 외부 임포트
-- **Hex View**: 512바이트 단위 원본 바이트 탐색
+- 최근 ELF artifact와 architecture/bit/size/SHA
+- `Not analyzed`, `Queued`, `Running`, `Verified`, `Failed` 분석 상태
+- 대기/실패 작업과 다음 액션
+- 최근 artifact의 Critical/High 위험 symbol 후보
 
-분석은 현재 ELF를 입력으로 받으며, 디스어셈블과 가젯 탐색은 x86/x86-64를 지원합니다.
+위험 symbol은 `Possible · static heuristic`으로 표시한다. import나 symbol 이름만으로
+실제 취약점을 확정하지 않는다.
+
+## ELF 업로드
+
+좌측 `Upload binary` 또는 Dashboard action에서 ELF를 선택한다.
+
+1. 브라우저가 파일을 `/api/v1/binaries`에 전송한다.
+2. 서버가 1MiB 이하 청크로 읽으며 32MiB 누적 제한을 적용한다.
+3. ELF magic과 구조를 검증한다.
+4. SHA-256으로 중복을 제거해 저장한다.
+5. UI가 Phase 1 정적 분석 작업을 시작한다.
+6. Binary Workspace로 이동한다.
+
+업로드 파일은 control plane에서 실행되지 않는다.
+
+## Binary Workspace
+
+현재 탭:
+
+- **Overview**: identity, protection matrix, 위험 symbol 후보, memory segment
+- **Disassembly**: entry부터 제한된 수의 Capstone instruction
+- **ROP Gadgets**: 실행 section의 `ret` 종결 gadget과 text filter
+- **Symbols**: static/dynamic symbol 검색
+- **Strings**: ASCII/UTF-16LE string
+- **GOT / PLT**: 관련 section과 undefined dynamic imports
+- **Hex View**: 512-byte page 기반 file view
+
+탭은 URL에 반영되므로 새로고침, 뒤로 가기, 링크 공유가 가능하다.
+
+Context Header에는 파일명, architecture, bit, short SHA, 분석 상태, compact protection
+요약이 표시된다. `Re-run static analysis`는 업로드 파일을 실행하지 않고 metadata
+분석만 다시 수행한다.
 
 ## Payload Studio
 
 ### Cyclic Pattern
 
-패턴 길이와 부분 수열 폭을 지정해 De Bruijn 패턴을 만듭니다. 크래시 후 레지스터 값
-(`0x61616162`) 또는 관찰된 바이트(`baaa`)를 넣으면 첫 오프셋을 계산합니다.
+De Bruijn pattern을 만들고 crash register value 또는 관찰된 byte sequence에서 offset을
+검색한다.
 
 ### Integer Pack
 
-주소를 32/64비트와 little/big endian에 맞춰 바이트로 변환합니다. 예를 들어
-`0x401156`의 64비트 little-endian 결과는 `56 11 40 00 00 00 00 00`입니다.
+주소를 32/64-bit, little/big endian byte로 변환한다.
 
 ### Overflow Builder
 
-다음 레이아웃으로 페이로드를 만듭니다.
-
 ```text
-[fill × padding][packed return target][packed ROP step 1][packed ROP step 2]...
+[fill × padding][packed return target][packed ROP values...]
 ```
 
-결과는 전체 hex와 주소/ASCII를 함께 보는 hexdump로 제공합니다.
+정적 payload byte layout만 생성하며 target에 연결하거나 실행하지 않는다.
 
 ### Shellcode Catalog
 
-x86/x86-64 syscall 학습용 바이트를 조회하고 복사합니다. 플랫폼은 이 바이트를 실행하지
-않습니다.
+교육용 x86/x86-64 syscall byte를 정적 참고용으로 표시한다. 플랫폼이 실행하지 않는다.
 
 ## Challenges
 
-문제 보드에서 미션을 고르고 ELF를 다운로드합니다. Binary Lab에 다시 업로드해 분석한 뒤
-요구 형식에 맞는 값을 제출합니다.
+결정론적 최소 ELF artifact를 내려받아 같은 정적 도구로 분석한다. 정답은 client bundle에
+포함하지 않고 server에서 상수 시간 비교한다. 이 artifact는 운영체제에서 실행하기 위한
+바이너리가 아니라 parser/disassembly 학습 fixture다.
 
-| 문제 | 난이도 | 핵심 기술 |
+## API
+
+OpenAPI:
+
+- 기본: `http://localhost:8000/api/v1/docs`
+- 기존 호환: `http://localhost:8000/api/docs`
+
+예:
+
+```bash
+BINARY_ID=$(
+  curl -s -F file=@./target http://localhost:8000/api/v1/binaries |
+  jq -r .binary_id
+)
+curl -s -X POST \
+  "http://localhost:8000/api/v1/binaries/$BINARY_ID/analyze" | jq
+curl -s \
+  "http://localhost:8000/api/v1/binaries/$BINARY_ID/checksec" | jq
+```
+
+## 오류 해결
+
+| Error | 의미 | 확인 |
 |---|---|---|
-| Ret2Win | Easy | 심볼과 고정 주소 |
-| Stack Offset | Easy | 스택 프레임과 반환 주소 오프셋 |
-| Checksec Audit | Easy | 비활성화된 완화 기법 |
-| ROP Gadget | Medium | `pop rdi ; ret` 탐색 |
-| Format String Leak | Medium | 문자열과 포맷 스트링 |
-| ROP Chain Reconstruction | Hard | 가젯, 심볼, XOR 데이터 복원 |
+| `UnsupportedFormatError` | ELF magic이 아님 | 압축/다른 format이 아닌지 확인 |
+| `PayloadTooLargeError` | 32MiB 기본 제한 초과 | 설정과 원본 크기 확인 |
+| `ParseError` | 손상/절단 ELF 구조 | 다른 parser/readelf로 원본 확인 |
+| `NotFoundError` | artifact/job이 없음 | SHA/삭제 여부 확인 |
+| `AnalysisError` | 분석 범위/지원 architecture 문제 | 요청 count/address와 arch 확인 |
 
-힌트는 한 단계씩 공개됩니다. 정답 제출 전에는 API 응답과 프런트엔드 번들 어디에도 정답이나
-풀이 설명이 포함되지 않습니다.
-
-## API 문서
-
-백엔드 실행 후 [http://localhost:8000/api/docs](http://localhost:8000/api/docs)에서
-OpenAPI 문서를 볼 수 있습니다. 모든 애플리케이션 엔드포인트는 `/api` 아래에 있습니다.
+한 analyzer panel이 실패해도 가능한 다른 artifact 정보는 유지하는 방향으로 확장한다.
 
 ## 안전 수칙
 
-Pwnable Lab은 교육, CTF, 소유한 시스템 또는 명시적으로 허가받은 보안 테스트를 위한
-도구입니다. 타인의 시스템에 허가 없이 페이로드를 사용하지 마세요.
+- 소유하거나 명시적인 권한을 받은 바이너리만 업로드한다.
+- Phase 1에는 인증과 사용자별 격리가 없으므로 공개 배포하지 않는다.
+- 동적 실행이 필요한 경우 Phase 6 sandbox runner가 완성될 때까지 별도 허가된 로컬
+  실습 환경을 사용한다.
+- 생성한 payload를 임의 인터넷 host나 권한 없는 시스템에 사용하지 않는다.
