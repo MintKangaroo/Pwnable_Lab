@@ -27,15 +27,78 @@ const severityTone = {
   info: 'cyan',
 };
 
-function Mitigation({ name, value, good }) {
+const protectionLabels = {
+  relro: 'RELRO',
+  stack_canary: 'STACK CANARY',
+  nx: 'NX',
+  executable_stack: 'EXECUTABLE STACK',
+  pie: 'PIE',
+  fortify: 'FORTIFY',
+  cet: 'CET',
+  ibt: 'IBT',
+  shadow_stack: 'SHADOW STACK',
+  rpath: 'RPATH',
+  runpath: 'RUNPATH',
+  rwx_segments: 'RWX SEGMENTS',
+  stripped: 'SYMBOL STRIPPING',
+  static_linking: 'LINKING MODE',
+};
+
+const verificationSymbols = {
+  verified: '✓',
+  inferred: '≈',
+  unknown: '?',
+};
+
+function protectionTone(protection) {
+  if (protection.name === 'rwx_segments')
+    return protection.enabled ? 'danger' : 'positive';
+  if (protection.name === 'executable_stack') {
+    if (protection.enabled === null) return 'neutral';
+    return protection.enabled ? 'danger' : 'positive';
+  }
+  if (['rpath', 'runpath'].includes(protection.name))
+    return protection.enabled ? 'warning' : 'neutral';
+  if (protection.name === 'stripped')
+    return protection.enabled ? 'warning' : 'positive';
+  if (protection.name === 'static_linking') return 'neutral';
+  if (protection.name === 'relro') {
+    if (protection.state === 'full') return 'positive';
+    return protection.state === 'none' ? 'danger' : 'warning';
+  }
+  if (['nx', 'stack_canary'].includes(protection.name))
+    return protection.enabled ? 'positive' : 'warning';
+  if (protection.name === 'pie') return protection.enabled ? 'positive' : 'warning';
+  return protection.enabled ? 'positive' : 'neutral';
+}
+
+function ProtectionCard({ protection }) {
+  const symbol = verificationSymbols[protection.verification] || '?';
   return (
-    <div className={`mitigation ${good ? 'safe' : 'unsafe'}`}>
-      <span className="mitigation-light" />
-      <div>
-        <small>{name}</small>
-        <strong>{value}</strong>
-      </div>
-    </div>
+    <article className={`protection-card tone-${protectionTone(protection)}`}>
+      <header>
+        <div>
+          <small>{protectionLabels[protection.name] || protection.name}</small>
+          <strong>{protection.state.replaceAll('_', ' ')}</strong>
+        </div>
+        <span className={`verification verification-${protection.verification}`}>
+          <span aria-hidden="true">{symbol}</span>
+          {protection.verification}
+        </span>
+      </header>
+      <p>{protection.impact}</p>
+      <footer>
+        <span>{Math.round(protection.confidence * 100)}% confidence</span>
+        <details>
+          <summary>Evidence {protection.evidence.length}</summary>
+          <ul>
+            {protection.evidence.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </details>
+      </footer>
+    </article>
   );
 }
 
@@ -87,11 +150,32 @@ function Overview({ sha, info }) {
             <span>program start</span>
           </div>
           <div className="metric">
-            <small>SECTIONS</small>
-            <strong>{info.sections.length}</strong>
-            <span>{info.symbols.length} symbols indexed</span>
+            <small>LINKING</small>
+            <strong>{info.linking || 'unknown'}</strong>
+            <span>{info.needed_libraries?.length || 0} required libraries</span>
           </div>
         </div>
+        <dl className="binary-linking-details">
+          <div>
+            <dt>INTERPRETER</dt>
+            <dd title={info.interpreter || ''}>{info.interpreter || 'Not present'}</dd>
+          </div>
+          <div>
+            <dt>LINKED LIBC</dt>
+            <dd>{info.linked_libc || 'Not detected'}</dd>
+          </div>
+          <div>
+            <dt>BUILD ID</dt>
+            <dd title={info.build_id || ''}>{info.build_id || 'Not present'}</dd>
+          </div>
+          <div>
+            <dt>INDEX</dt>
+            <dd>
+              {info.sections.length} sections · {info.symbols.length} symbols ·{' '}
+              {info.relocation_count || 0} relocations
+            </dd>
+          </div>
+        </dl>
       </section>
 
       <section>
@@ -102,33 +186,12 @@ function Overview({ sha, info }) {
           </div>
           <p>활성화된 보호 기법과 익스플로잇 난이도</p>
         </div>
-        <div className="mitigation-grid">
-          <Mitigation
-            name="RELRO"
-            value={security.relro}
-            good={security.relro === 'Full'}
-          />
-          <Mitigation
-            name="STACK CANARY"
-            value={security.canary ? 'Found' : 'Missing'}
-            good={security.canary}
-          />
-          <Mitigation
-            name="NX"
-            value={security.nx ? 'Enabled' : 'Disabled'}
-            good={security.nx}
-          />
-          <Mitigation name="PIE" value={security.pie} good={security.pie === 'PIE'} />
-          <Mitigation
-            name="FORTIFY"
-            value={security.fortify ? 'Enabled' : 'Not found'}
-            good={security.fortify}
-          />
-          <Mitigation
-            name="SYMBOLS"
-            value={security.stripped ? 'Stripped' : 'Present'}
-            good={!security.stripped}
-          />
+        <div className="protection-grid">
+          {(security.protections || [])
+            .filter((item) => protectionLabels[item.name])
+            .map((protection) => (
+              <ProtectionCard key={protection.name} protection={protection} />
+            ))}
         </div>
       </section>
 
@@ -138,7 +201,7 @@ function Overview({ sha, info }) {
             <span>03</span>
             <h3>ATTACK SURFACE</h3>
           </div>
-          <p>{risky.length}개의 주의 대상 · 심볼 기반 휴리스틱</p>
+          <p>{risky.length}개의 주의 대상 · symbol 및 direct-call 휴리스틱</p>
         </div>
         {findings.length ? (
           <div className="finding-list">
@@ -146,7 +209,14 @@ function Overview({ sha, info }) {
               <article className="finding" key={finding.symbol}>
                 <Badge tone={severityTone[finding.severity]}>{finding.severity}</Badge>
                 <code>{finding.symbol}()</code>
-                <span>{finding.category}</span>
+                <span className="finding-classification">
+                  {finding.category}
+                  <small>
+                    ◇ {finding.status || 'possible'} ·{' '}
+                    {Math.round((finding.confidence || 0) * 100)}% ·{' '}
+                    {finding.verification || 'inferred'}
+                  </small>
+                </span>
                 <p>{finding.description}</p>
               </article>
             ))}
@@ -524,6 +594,88 @@ function GotPlt({ sha }) {
         <div className="section-heading">
           <div>
             <span>02</span>
+            <h3>GOT RELOCATION TARGETS</h3>
+          </div>
+          <p>relocation offset에서 직접 확인된 entry</p>
+        </div>
+        <DataTable
+          rows={report.entries}
+          empty="GOT relocation target이 없습니다."
+          keyFor={(row, index) => `${row.address}-${row.symbol}-${index}`}
+          columns={[
+            {
+              key: 'address',
+              label: 'GOT ADDRESS',
+              render: (row) => (
+                <code className="address">{formatHex(row.address)}</code>
+              ),
+            },
+            {
+              key: 'symbol',
+              label: 'SYMBOL',
+              render: (row) => <code className="symbol-name">{row.symbol || '—'}</code>,
+            },
+            { key: 'relocation_type', label: 'RELOCATION' },
+            { key: 'relocation_section', label: 'SOURCE' },
+            {
+              key: 'verification',
+              label: 'VERIFICATION',
+              render: () => (
+                <span className="verification verification-verified">✓ verified</span>
+              ),
+            },
+          ]}
+        />
+      </section>
+      <section>
+        <div className="section-heading">
+          <div>
+            <span>03</span>
+            <h3>PLT STUB CANDIDATES</h3>
+          </div>
+          <p>section entry size와 relocation 순서에서 파생</p>
+        </div>
+        <DataTable
+          rows={report.plt_entries}
+          empty="파생 가능한 PLT stub이 없습니다."
+          keyFor={(row, index) => `${row.symbol}-${index}`}
+          columns={[
+            {
+              key: 'address',
+              label: 'PLT ADDRESS',
+              render: (row) => (
+                <code className="address">
+                  {row.address === null ? 'unknown' : formatHex(row.address)}
+                </code>
+              ),
+            },
+            {
+              key: 'symbol',
+              label: 'SYMBOL',
+              render: (row) => <code className="symbol-name">{row.symbol}</code>,
+            },
+            {
+              key: 'got_address',
+              label: 'GOT ADDRESS',
+              render: (row) => <code>{formatHex(row.got_address)}</code>,
+            },
+            { key: 'section', label: 'SECTION' },
+            {
+              key: 'verification',
+              label: 'VERIFICATION',
+              render: (row) => (
+                <span className={`verification verification-${row.verification}`}>
+                  ≈ {row.verification} · {Math.round(row.confidence * 100)}%
+                </span>
+              ),
+            },
+          ]}
+        />
+      </section>
+      <section>
+        <div className="section-heading">
+          <div>
+            <span>04</span>
             <h3>IMPORTED SYMBOLS</h3>
           </div>
         </div>

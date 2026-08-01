@@ -45,6 +45,24 @@ export interface ChecksecResult {
   runpath: boolean;
   fortify: boolean;
   stripped: boolean;
+  executable_stack: boolean | null;
+  rwx_segments: string[];
+  static: boolean;
+  cet: boolean;
+  ibt: boolean;
+  shadow_stack: boolean;
+  protections: ProtectionResult[];
+}
+
+export interface ProtectionResult {
+  name: string;
+  state: string;
+  enabled: boolean | null;
+  verification: 'verified' | 'inferred' | 'unknown';
+  evidence: string[];
+  impact: string;
+  possible_strategies: string[];
+  confidence: number;
 }
 
 export interface VulnerabilityFinding {
@@ -52,6 +70,11 @@ export interface VulnerabilityFinding {
   category: string;
   severity: string;
   description: string;
+  status: 'possible' | 'likely' | 'confirmed' | 'disproven';
+  confidence: number;
+  verification: 'verified' | 'inferred' | 'unknown';
+  evidence: string[];
+  false_positive_factors: string[];
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {

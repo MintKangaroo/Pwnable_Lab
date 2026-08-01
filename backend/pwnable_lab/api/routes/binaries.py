@@ -156,6 +156,16 @@ def binary_info(
     return service.info(repo.load_bytes(sha256))
 
 
+@router.get("/{sha256}/elf")
+def binary_elf(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """Phase 2 comprehensive ELF metadata contract."""
+    return service.info(repo.load_bytes(sha256))
+
+
 @router.get("/{sha256}/checksec")
 def binary_checksec(
     sha256: str,
@@ -184,13 +194,101 @@ def binary_gadgets(
     return service.gadgets(repo.load_bytes(sha256), query=q)
 
 
-@router.get("/{sha256}/got")
-def binary_got(
+@router.get("/{sha256}/symbols")
+def binary_symbols(
+    sha256: str,
+    kind: Literal[
+        "all", "static", "dynamic", "imports", "exports", "functions"
+    ] = Query(default="all"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.symbols(
+        repo.load_bytes(sha256), kind=kind, offset=offset, limit=limit
+    )
+
+
+@router.get("/{sha256}/imports")
+def binary_imports(
+    sha256: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.symbols(
+        repo.load_bytes(sha256), kind="imports", offset=offset, limit=limit
+    )
+
+
+@router.get("/{sha256}/exports")
+def binary_exports(
+    sha256: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.symbols(
+        repo.load_bytes(sha256), kind="exports", offset=offset, limit=limit
+    )
+
+
+@router.get("/{sha256}/functions")
+def binary_functions(
+    sha256: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.symbols(
+        repo.load_bytes(sha256), kind="functions", offset=offset, limit=limit
+    )
+
+
+@router.get("/{sha256}/relocations")
+def binary_relocations(
+    sha256: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.relocations(repo.load_bytes(sha256), offset=offset, limit=limit)
+
+
+@router.get("/{sha256}/libraries")
+def binary_libraries(
     sha256: str,
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
 ) -> dict:
-    return service.got_plt(repo.load_bytes(sha256))
+    return service.libraries(repo.load_bytes(sha256))
+
+
+@router.get("/{sha256}/got")
+def binary_got(
+    sha256: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.got_entries(repo.load_bytes(sha256), offset=offset, limit=limit)
+
+
+@router.get("/{sha256}/plt")
+def binary_plt(
+    sha256: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.plt_entries(repo.load_bytes(sha256), offset=offset, limit=limit)
 
 
 @router.get("/{sha256}/strings")

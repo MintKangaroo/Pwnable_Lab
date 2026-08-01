@@ -212,6 +212,16 @@ Pwnable_Lab/
 - 분석 결과 캐시 및 pagination
 - fixture를 실제 C 컴파일 산출물로 보강
 
+구현 상태(2026-08-02):
+
+- 완료: interpreter/DT_NEEDED/libc/Build ID/RPATH/RUNPATH/linking 정규화
+- 완료: static/dynamic/import/export/function symbol과 relocation pagination API
+- 완료: relocation 기반 verified GOT와 section layout 기반 inferred PLT
+- 완료: 근거/영향/전략/confidence 기반 14개 checksec 항목
+- 완료: x86/x86-64 direct call과 제한적 calling-convention 인자 추정
+- 완료: GCC 생성 protected dynamic/static fixture와 API 회귀 테스트
+- 진행 예정: indirect call과 interprocedural data flow 정밀화, 대형 결과 DB cache 분리
+
 ### Phase 3 — 디스어셈블리와 ROP
 
 - 아키텍처 어댑터와 함수 경계 탐지

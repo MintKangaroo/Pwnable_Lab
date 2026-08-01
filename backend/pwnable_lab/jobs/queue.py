@@ -33,28 +33,15 @@ class InlineAnalysisJobQueue:
         repository: BinaryRepository,
         service: AnalysisService,
     ) -> AnalysisJobRecord:
-        job = repository.create_analysis_job(binary_id)
+        job = repository.create_analysis_job(
+            binary_id,
+            analyzer_name="static_elf",
+            analyzer_version="2.0.0",
+        )
         repository.update_analysis_job(job.id, status="running")
         try:
             data = repository.load_bytes(binary_id)
-            image = service.image(data)
-            result = {
-                "verification": "verified",
-                "source": "pyelftools ELF parser",
-                "confidence": 1.0,
-                "elf": {
-                    "sha256": binary_id,
-                    "bits": image.bits,
-                    "endian": image.endian,
-                    "machine": image.machine,
-                    "type": image.e_type,
-                    "entry": image.entry,
-                    "section_count": len(image.sections),
-                    "segment_count": len(image.segments),
-                    "symbol_count": len(image.symbols) + len(image.dynamic_symbols),
-                },
-                "checksec": service.checksec(data),
-            }
+            result = service.analysis_summary(data, binary_id)
             return repository.update_analysis_job(
                 job.id, status="completed", result=result
             )

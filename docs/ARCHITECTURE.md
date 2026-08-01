@@ -1,6 +1,6 @@
 # PwnPilot 아키텍처
 
-## 현재 Phase 1 구성
+## 현재 Phase 1–2 구성
 
 ```text
 Browser
@@ -18,9 +18,10 @@ FastAPI Control Plane
   │   ├── AnalysisJobRecord
   │   └── AuditLogRecord
   ├── InlineAnalysisJobQueue (development only)
-  └── Existing static analysis core
+  └── Static analysis core
       ├── normalized ELF parser
-      ├── checksec / symbol heuristic
+      ├── interpreter / dynamic tags / relocations
+      ├── evidence-based checksec / call-site heuristic
       ├── Capstone disassembly / gadgets
       └── strings / GOT·PLT / hex
         │
@@ -28,7 +29,7 @@ FastAPI Control Plane
         └── PostgreSQL + Alembic (Compose)
 ```
 
-API는 업로드 바이너리를 실행하지 않는다. Phase 1 queue의 `running`은 pyelftools/Capstone
+API는 업로드 바이너리를 실행하지 않는다. 현재 queue의 `running`은 pyelftools/Capstone
 정적 분석만 의미한다.
 
 ## 의존 방향
@@ -81,7 +82,7 @@ DELETE /binaries/:id
   → jobs/record delete → stored bytes delete → audit retained
 ```
 
-Phase 1 inline queue는 요청 안에서 완료되므로 API 응답 시점에는 보통 terminal state다.
+inline queue는 요청 안에서 완료되므로 API 응답 시점에는 보통 terminal state다.
 후속 Redis worker는 같은 상태 계약을 비동기적으로 갱신한다.
 
 ## DB와 migration
@@ -96,11 +97,12 @@ Phase 1 inline queue는 요청 안에서 완료되므로 API 응답 시점에는
 
 ## 프런트엔드
 
-Phase 1 우선 화면:
+현재 우선 화면:
 
 - Dashboard: recent workspaces, analysis queue, 실제 symbol finding 후보
 - Binary Workspace: URL tab, binary identity, analysis status, protection context
 - 기존 Disassembly/ROP/Symbols/Strings/GOT/Hex 분석 view
+- Phase 2 evidence/confidence protection matrix와 linking identity
 - Payload Studio와 교육용 Challenges
 
 정보 구조와 디자인 규약은
@@ -136,6 +138,7 @@ non-root, cap drop, seccomp, no-new-privileges, PID/CPU/memory/file/time/output 
 - inline queue는 프로세스 장애 복구/취소/heartbeat를 제공하지 않는다.
 - 분석 parser는 아직 별도 static worker process로 격리되지 않았다.
 - 동적 분석과 exploit 실행은 구현되지 않았다.
-- 위험 함수 탐지는 symbol heuristic이며 취약점 확정이 아니다.
+- 위험 함수 탐지는 symbol/direct-call heuristic이며 취약점 확정이 아니다.
+- PLT 주소는 ABI section layout에서 파생한 inferred 값이며 relocation target과 구분된다.
 
-따라서 Phase 1을 공개 인터넷 운영 서비스로 노출하지 않는다.
+따라서 현재 버전을 공개 인터넷 운영 서비스로 노출하지 않는다.
