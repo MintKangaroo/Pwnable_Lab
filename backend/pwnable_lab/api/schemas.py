@@ -17,6 +17,7 @@ class BinarySummary(BaseModel):
     sha256: str
     filename: str
     size: int
+    format: str
     machine: str
     bits: int
     analysis_status: str
@@ -32,6 +33,7 @@ class UploadResponse(BaseModel):
     sha256: str
     filename: str
     size: int
+    format: str
     analysis_status: str
 
 

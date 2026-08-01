@@ -1,7 +1,7 @@
 """분석 작업 실행 인터페이스와 개발용 인라인 구현.
 
-인라인 큐는 Phase 1 개발 모드용이다. 업로드 바이너리를 실행하지 않고 pyelftools 기반
-정적 메타데이터만 계산한다. 운영용 비동기 worker는 후속 Phase에서 같은 인터페이스 뒤에
+인라인 큐는 개발 모드용이다. 업로드 artifact를 실행하지 않고 ELF/PE/raw 정적
+메타데이터만 계산한다. 운영용 비동기 worker는 후속 Phase에서 같은 인터페이스 뒤에
 연결한다.
 """
 
@@ -35,8 +35,8 @@ class InlineAnalysisJobQueue:
     ) -> AnalysisJobRecord:
         job = repository.create_analysis_job(
             binary_id,
-            analyzer_name="static_elf",
-            analyzer_version="2.0.0",
+            analyzer_name="static_binary",
+            analyzer_version="3.0.0",
         )
         repository.update_analysis_job(job.id, status="running")
         try:

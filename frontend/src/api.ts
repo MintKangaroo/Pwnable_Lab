@@ -7,6 +7,7 @@ export interface BinarySummary {
   sha256: string;
   filename: string;
   size: number;
+  format: 'ELF' | 'PE' | 'RAW';
   machine: string;
   bits: number;
   analysis_status: AnalysisStatus;
@@ -18,6 +19,7 @@ export interface UploadResult {
   sha256: string;
   filename: string;
   size: number;
+  format: 'ELF' | 'PE' | 'RAW';
   analysis_status: AnalysisStatus;
 }
 
@@ -37,20 +39,21 @@ export interface AnalysisJob {
 }
 
 export interface ChecksecResult {
+  format: 'ELF' | 'PE' | 'RAW';
   relro: string;
-  canary: boolean;
-  nx: boolean;
+  canary: boolean | null;
+  nx: boolean | null;
   pie: string;
   rpath: boolean;
   runpath: boolean;
-  fortify: boolean;
-  stripped: boolean;
+  fortify: boolean | null;
+  stripped: boolean | null;
   executable_stack: boolean | null;
   rwx_segments: string[];
-  static: boolean;
-  cet: boolean;
-  ibt: boolean;
-  shadow_stack: boolean;
+  static: boolean | null;
+  cet: boolean | null;
+  ibt: boolean | null;
+  shadow_stack: boolean | null;
   protections: ProtectionResult[];
 }
 
@@ -127,8 +130,20 @@ export const api = {
   got: (sha: string) => request<Record<string, unknown>>(`/binaries/${sha}/got`),
   strings: (sha: string, minLength = 4) =>
     request<unknown[]>(`/binaries/${sha}/strings?min_length=${minLength}`),
-  disassembly: (sha: string, count = 250) =>
-    request<unknown[]>(`/binaries/${sha}/disassembly?count=${count}`),
+  disassembly: (
+    sha: string,
+    count = 250,
+    options: { architecture?: 'x86' | 'x86_64'; baseAddress?: number | string } = {},
+  ) => {
+    const params = new URLSearchParams({ count: String(count) });
+    if (options.architecture) params.set('architecture', options.architecture);
+    if (options.baseAddress !== undefined) {
+      params.set('base_address', String(options.baseAddress));
+    }
+    return request<unknown[]>(`/binaries/${sha}/disassembly?${params}`);
+  },
+  entropy: (sha: string) =>
+    request<Record<string, unknown>>(`/binaries/${sha}/entropy`),
   hex: (sha: string, page = 0) =>
     request<Record<string, unknown>>(`/binaries/${sha}/hex?page=${page}`),
 
@@ -152,7 +167,8 @@ export const api = {
   artifactUrl: (slug: string) => `${BASE}/challenges/${slug}/artifact`,
 };
 
-export const formatHex = (value: number, width = 0) => {
+export const formatHex = (value: number | null | undefined, width = 0) => {
+  if (value === null || value === undefined) return '—';
   const number = Number(value);
   if (!Number.isFinite(number)) return '—';
   return `0x${number.toString(16).padStart(width, '0')}`;

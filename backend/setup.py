@@ -7,8 +7,8 @@ setup(
     name="pwnable-lab",
     version="1.0.0",
     description=(
-        "A safe web playground for ELF analysis, exploit payload construction, "
-        "and pwn challenges."
+        "A safe web workspace for ELF, PE, and raw-binary static analysis "
+        "and pwn education."
     ),
     packages=find_packages(include=["pwnable_lab", "pwnable_lab.*"]),
     python_requires=">=3.10",

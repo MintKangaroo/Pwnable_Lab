@@ -1223,6 +1223,20 @@ select {
   gap: 9px;
 }
 
+.raw-disassembly-options {
+  margin-left: auto;
+  padding-left: 8px;
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.mono-input {
+  width: 118px;
+  height: 30px;
+  padding: 0 8px;
+  color: var(--color-text-primary);
+  font: 10px var(--mono);
+}
+
 .code-view,
 .hex-view {
   overflow: auto;

@@ -56,6 +56,13 @@ interface DashboardFinding {
 const errorMessage = (reason: unknown): string =>
   reason instanceof Error ? reason.message : '알 수 없는 오류가 발생했습니다.';
 
+const binaryDescriptor = (binary: BinarySummary): string => {
+  if (binary.format === 'RAW')
+    return `RAW · architecture unknown · ${formatBytes(binary.size)}`;
+  const machine = binary.machine.replace('EM_', '').replace('IMAGE_FILE_MACHINE_', '');
+  return `${binary.format} · ${machine} · ${binary.bits}-bit · ${formatBytes(binary.size)}`;
+};
+
 function UploadButton({
   upload,
   uploading,
@@ -70,7 +77,7 @@ function UploadButton({
         onClick={() => input.current?.click()}
       >
         <Icon name="upload" size={17} />
-        {uploading ? 'Validating ELF…' : 'Upload binary'}
+        {uploading ? 'Validating artifact…' : 'Upload binary'}
       </button>
       <input
         ref={input}
@@ -125,8 +132,8 @@ function Sidebar({ binaries, selected, upload, uploading }: SidebarProps) {
           <Icon name="upload" size={18} />
         </span>
         <span>
-          <strong>{uploading ? 'Validating ELF…' : 'Upload binary'}</strong>
-          <small>ELF only · 32 MiB max</small>
+          <strong>{uploading ? 'Validating artifact…' : 'Upload binary'}</strong>
+          <small>ELF · PE/EXE · RAW · 32 MiB max</small>
         </span>
         <input
           ref={input}
@@ -153,10 +160,7 @@ function Sidebar({ binaries, selected, upload, uploading }: SidebarProps) {
             <span className="target-dot" aria-hidden="true" />
             <span className="target-body">
               <strong title={binary.filename}>{binary.filename}</strong>
-              <small>
-                {binary.bits}-bit · {binary.machine.replace('EM_', '')} ·{' '}
-                {formatBytes(binary.size)}
-              </small>
+              <small>{binaryDescriptor(binary)}</small>
               <span className="target-state">
                 <StatusBadge status={binary.analysis_status} compact />
                 <code>{binary.sha256.slice(0, 10)}</code>
@@ -242,7 +246,7 @@ function Dashboard({ binaries, loading, upload, uploading }: DashboardProps) {
         </div>
         <div className="dashboard-primary-action">
           <UploadButton upload={upload} uploading={uploading} />
-          <span>ELF32 / ELF64 · file is not executed</span>
+          <span>ELF / PE / RAW · files are not executed</span>
         </div>
       </header>
 
@@ -252,7 +256,7 @@ function Dashboard({ binaries, loading, upload, uploading }: DashboardProps) {
         <section className="dashboard-empty">
           <Empty
             title="No binaries yet"
-            description="소유하거나 분석 권한이 있는 ELF를 업로드하세요. Phase 1 pipeline은 파일을 실행하지 않고 구조를 검증해 저장합니다."
+            description="소유하거나 분석 권한이 있는 ELF, PE/EXE, raw binary를 업로드하세요. 파일은 실행하지 않고 정적으로만 검증합니다."
           />
           <UploadButton upload={upload} uploading={uploading} />
         </section>
@@ -263,7 +267,7 @@ function Dashboard({ binaries, loading, upload, uploading }: DashboardProps) {
               <div className="panel-heading">
                 <div>
                   <h2>Recent workspaces</h2>
-                  <p>최근 업로드한 ELF와 정적 분석 상태</p>
+                  <p>최근 업로드한 artifact와 정적 분석 상태</p>
                 </div>
                 <span>{binaries.length} artifacts</span>
               </div>
@@ -279,10 +283,7 @@ function Dashboard({ binaries, loading, upload, uploading }: DashboardProps) {
                     </span>
                     <span className="workspace-identity">
                       <strong>{binary.filename}</strong>
-                      <small>
-                        {binary.machine.replace('EM_', '')} · {binary.bits}-bit ·{' '}
-                        {formatBytes(binary.size)}
-                      </small>
+                      <small>{binaryDescriptor(binary)}</small>
                     </span>
                     <code>{binary.sha256.slice(0, 12)}</code>
                     <StatusBadge status={binary.analysis_status} />
@@ -328,7 +329,7 @@ function Dashboard({ binaries, loading, upload, uploading }: DashboardProps) {
               <div className="queue-note">
                 <Icon name="shield" size={16} />
                 <p>
-                  Phase 1 jobs perform static parsing only. Dynamic execution requires
+                  Jobs perform bounded static parsing only. Dynamic execution requires
                   the isolated runner planned for Phase 6.
                 </p>
               </div>

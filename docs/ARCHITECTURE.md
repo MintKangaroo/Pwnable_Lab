@@ -1,6 +1,6 @@
 # PwnPilot 아키텍처
 
-## 현재 Phase 1–2 구성
+## 현재 정적 분석 구성
 
 ```text
 Browser
@@ -18,8 +18,11 @@ FastAPI Control Plane
   │   ├── AnalysisJobRecord
   │   └── AuditLogRecord
   ├── InlineAnalysisJobQueue (development only)
-  └── Static analysis core
+  └── Format-aware static analysis core
+      ├── signature/archive policy
       ├── normalized ELF parser
+      ├── bounded PE32/PE32+ parser
+      ├── raw byte metadata + opt-in disassembly
       ├── interpreter / dynamic tags / relocations
       ├── evidence-based checksec / call-site heuristic
       ├── Capstone disassembly / gadgets
@@ -29,8 +32,8 @@ FastAPI Control Plane
         └── PostgreSQL + Alembic (Compose)
 ```
 
-API는 업로드 바이너리를 실행하지 않는다. 현재 queue의 `running`은 pyelftools/Capstone
-정적 분석만 의미한다.
+API는 업로드 바이너리를 실행하지 않는다. 현재 queue의 `running`은
+ELF/PE/raw 정적 분석만 의미한다.
 
 ## 의존 방향
 
@@ -52,7 +55,7 @@ UploadFile
   → write mode 0600 temporary file
   → incremental SHA-256
   → fsync
-  → read/parse ELF structure
+  → detect ELF/PE/raw and validate bounded structure/policy
   → atomic hard-link to storage/{sha256}
   → remove temporary name
   → insert/reuse DB metadata
@@ -138,7 +141,7 @@ non-root, cap drop, seccomp, no-new-privileges, PID/CPU/memory/file/time/output 
 - inline queue는 프로세스 장애 복구/취소/heartbeat를 제공하지 않는다.
 - 분석 parser는 아직 별도 static worker process로 격리되지 않았다.
 - 동적 분석과 exploit 실행은 구현되지 않았다.
-- 위험 함수 탐지는 symbol/direct-call heuristic이며 취약점 확정이 아니다.
+- ELF 위험 함수는 symbol/direct-call, PE는 import heuristic이며 취약점 확정이 아니다.
 - PLT 주소는 ABI section layout에서 파생한 inferred 값이며 relocation target과 구분된다.
 
 따라서 현재 버전을 공개 인터넷 운영 서비스로 노출하지 않는다.

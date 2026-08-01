@@ -68,16 +68,17 @@
 
 ### 3.1 MVP: Phase 1~2
 
-MVP는 업로드한 ELF를 안전하게 보관하고, 핵심 정적 분석 결과를 웹에서 확인하는 범위다.
+MVP는 업로드한 ELF, PE/EXE, raw binary를 안전하게 보관하고, 포맷별 핵심 정적 분석
+결과를 웹에서 확인하는 범위다.
 
 - 모노레포와 실행 가능한 FastAPI/React 애플리케이션
 - `/api/v1` API와 OpenAPI 문서
 - 32MiB 기본 상한의 청크 기반 업로드
-- SHA-256 저장, 파일명 무시, ELF magic/구조 검사, 중복 제거
+- SHA-256 저장, 파일명 무시, ELF/PE 구조 검사, raw intake 정책, 중복 제거
 - 원자적 파일 채택과 삭제
 - SQLite 개발 모드, PostgreSQL 배포 모드, Alembic 마이그레이션
 - 인라인 작업 큐와 분석 상태 API
-- ELF metadata, sections, segments, symbols, strings, imports, GOT/PLT, relocations
+- ELF metadata/GOT/PLT, PE metadata/import/export/relocation, raw strings/hex/entropy
 - 근거/영향/신뢰도를 포함한 checksec
 - 위험 함수 후보와 오탐 가능성 표시
 - 기본 Dashboard/Binary Workspace/Hex View
@@ -222,6 +223,15 @@ Pwnable_Lab/
 - 완료: GCC 생성 protected dynamic/static fixture와 API 회귀 테스트
 - 진행 예정: indirect call과 interprocedural data flow 정밀화, 대형 결과 DB cache 분리
 
+포맷 확장 상태(2026-08-02):
+
+- 완료: ELF/PE/raw signature detection과 archive/text 거부 정책
+- 완료: PE32/PE32+ header, section, import/export, base relocation parser
+- 완료: PE ASLR/DEP/CFG 등 근거 기반 보호 기법 판정
+- 완료: raw entropy/strings/hex와 명시적 x86/x86-64/base-address disassembly
+- 완료: format DB migration, format-aware analysis job v3, UI capability tabs
+- 진행 예정: PE delay import/load-config 심화, ARM/AArch64/raw architecture adapter
+
 ### Phase 3 — 디스어셈블리와 ROP
 
 - 아키텍처 어댑터와 함수 경계 탐지
@@ -293,7 +303,7 @@ Pwnable_Lab/
 
 | 위험 | 영향 | 대응 |
 |---|---|---|
-| 악성/손상 ELF에 의한 parser DoS | worker 메모리/CPU 고갈 | 업로드/분석 크기 상한, parser timeout, 별도 worker, malformed corpus |
+| 악성/손상 ELF/PE에 의한 parser DoS | worker 메모리/CPU 고갈 | 업로드/분석 크기 상한, bounded table, 별도 worker, malformed corpus |
 | pyelftools/LIEF/Capstone 결과 불일치 | 잘못된 판정 | 정규화 계층, analyzer/version/evidence 저장, fixture 교차 검증 |
 | stripped/최적화 바이너리의 함수 경계 오류 | CFG와 호출 추론 오탐 | inferred 상태, confidence, r2/Rizin 선택 어댑터로 교차 확인 |
 | 대형 분석 JSON | DB/네트워크/브라우저 부담 | 요약/상세 분리, pagination, blob/object storage, TTL cache |
@@ -310,7 +320,7 @@ Pwnable_Lab/
 
 - 경로 조작: 원본 이름을 저장 경로에 사용하지 않고 basename만 표시한다.
 - oversized upload: Content-Length를 신뢰하지 않고 청크 누적 크기로 제한한다.
-- archive/decompression bomb: Phase 1은 ELF만 허용하고 압축 입력을 거부한다.
+- archive/decompression bomb: ELF/PE/raw만 허용하고 known archive signature를 거부한다.
 - 중복/경합: content hash와 원자적 파일 생성으로 기존 파일을 덮어쓰지 않는다.
 - parser exploit: 구조 오류를 4xx로 정규화하고 향후 정적 분석 worker로 분리한다.
 - cross-tenant 접근: 인증 도입 전 단일 사용자 개발 모드로 명시하고 운영 노출을 금지한다.

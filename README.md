@@ -13,8 +13,8 @@
 
 </div>
 
-PwnPilot은 ELF 구조와 보호 기법, 공격 표면, 디스어셈블리, ROP 재료를 한 Workspace에서
-검토하는 교육용 분석 플랫폼입니다. 현재 Phase 1 기반과 Phase 2 정적 ELF 분석이 동작합니다.
+PwnPilot은 ELF, Windows PE/EXE, raw binary의 구조와 보호 기법, 공격 표면,
+디스어셈블리 재료를 한 Workspace에서 검토하는 교육용 분석 플랫폼입니다.
 업로드한 바이너리는 웹/API 호스트에서 실행하지 않습니다.
 
 > 교육용 CTF, 사용자가 소유한 바이너리, 명시적으로 허가받은 보안 분석에만 사용하세요.
@@ -22,11 +22,19 @@ PwnPilot은 ELF 구조와 보호 기법, 공격 표면, 디스어셈블리, ROP 
 
 ### Dashboard
 
-![PwnPilot Phase 2 Dashboard](docs/screenshots/08-dashboard-phase2.png)
+![PwnPilot Multi-format Dashboard](docs/screenshots/10-multiformat-dashboard.png)
 
 ### Binary Overview
 
 ![PwnPilot Phase 2 Binary Overview](docs/screenshots/09-binary-overview-phase2.png)
+
+### Windows PE/EXE Overview
+
+![PwnPilot PE Overview](docs/screenshots/11-pe-overview.png)
+
+### Raw Binary Overview
+
+![PwnPilot Raw Overview](docs/screenshots/12-raw-overview.png)
 
 ## 5분 빠른 시작
 
@@ -50,13 +58,23 @@ docker compose up --build -d
 
 ## 사용 방법
 
-1. Dashboard의 **Upload binary**를 눌러 ELF 파일을 선택합니다.
+1. Dashboard의 **Upload binary**를 눌러 ELF, PE/EXE, raw binary를 선택합니다.
 2. 업로드가 완료되면 정적 분석이 자동 시작됩니다.
-3. **Overview**에서 ELF identity, 보호 기법, 근거, confidence, 위험 API 후보를 확인합니다.
+3. **Overview**에서 포맷 identity, 보호 기법, 근거, confidence, 위험 API 후보를 확인합니다.
 4. **Disassembly**, **ROP Gadgets**, **Symbols**, **Strings**, **GOT/PLT**, **Hex View**로
    필요한 근거를 더 자세히 탐색합니다.
 
-현재 버전은 업로드한 ELF를 **실행하지 않고** 정적 분석만 수행합니다.
+현재 버전은 업로드한 파일을 **실행하지 않고** 정적 분석만 수행합니다.
+
+## 지원 포맷
+
+| 포맷 | 현재 분석 범위 | 정확성 규칙 |
+|---|---|---|
+| ELF32/ELF64 | headers, sections, segments, symbols, relocations, GOT/PLT, checksec, x86 disassembly/gadgets | ELF 구조 검증 후 저장 |
+| PE32/PE32+ EXE/DLL | headers, sections, imports/exports, base relocations, ASLR/DEP/CFG flags, x86 disassembly | loader flag 선언과 runtime enforcement를 구분 |
+| Raw binary | hash, size, entropy, strings, hex, opt-in x86/x86-64 disassembly | architecture/base address를 추측하지 않음 |
+
+ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 거부됩니다.
 
 ## 현재 구현 범위
 
@@ -85,6 +103,15 @@ docker compose up --build -d
 - x86/x86-64 direct call 탐지와 제한적인 register/stack argument 추정
 - 실제 GCC 생성 PIE/Full RELRO/Canary/Fortify/CET 및 static fixture 회귀 테스트
 
+### Format-aware static intake
+
+- MIME/파일명을 신뢰하지 않는 ELF/PE/raw 탐지
+- PE32/PE32+ section, import, export, base relocation, subsystem, image base
+- PE ASLR, DEP/NX Compat, High Entropy VA, CFG, Authenticode table 근거
+- raw binary의 format-neutral entropy, strings, hex
+- raw disassembly는 `x86`/`x86_64`와 base address를 명시한 경우에만 실행
+- malformed PE, 일반 텍스트, archive signature 거부
+
 ### 재사용된 정적 분석 기능
 
 | 분석 | 현재 내용 |
@@ -97,6 +124,7 @@ docker compose up --build -d
 | Strings | ASCII, UTF-16LE |
 | GOT/PLT | verified relocation target과 inferred PLT stub |
 | Hex | 서버 pagination 기반 512-byte page |
+| Entropy | 전체 파일과 section/raw window별 Shannon entropy; 패킹 확정으로 사용하지 않음 |
 | Payload tools | cyclic, cyclic find, p32/p64, overflow layout |
 | Learning fixtures | 결정론적 교육용 정적 ELF 문제 6종 |
 
@@ -106,8 +134,8 @@ Binary Workspace를 포함한 화면은 [`docs/screenshots/`](docs/screenshots)�
 
 - Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic
 - Database: SQLite 또는 PostgreSQL
-- Queue: Phase 1 인라인 정적 분석 큐; Redis worker는 후속 Phase
-- Analysis: pyelftools, Capstone
+- Queue: 개발용 인라인 정적 분석 큐; Redis worker는 후속 Phase
+- Analysis: pyelftools, dependency-free bounded PE parser, Capstone
 - Frontend: React 19, TypeScript, Vite, TanStack Query, React Router
 - Runtime: Docker Compose, Nginx
 - Quality: pytest, coverage, Ruff, Black, mypy 설정, TypeScript strict
@@ -167,19 +195,20 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 
 ## 주요 API
 
-기본 prefix는 `/api/v1`입니다. `binary_id`는 Phase 1에서 SHA-256과 같습니다.
+기본 prefix는 `/api/v1`입니다. `binary_id`는 현재 SHA-256과 같습니다.
 
 | Method | Path | 설명 |
 |---|---|---|
 | `GET` | `/health` | API 상태와 버전 |
-| `POST` | `/binaries` | ELF 스트리밍 업로드 |
+| `POST` | `/binaries` | ELF/PE/raw 스트리밍 업로드 |
 | `GET` | `/binaries` | artifact 목록 |
 | `GET` | `/binaries/{binary_id}` | artifact 상세와 분석 상태 |
 | `DELETE` | `/binaries/{binary_id}` | artifact와 분석 작업 삭제 |
 | `POST` | `/binaries/{binary_id}/analyze` | versioned 정적 분석 작업 시작 |
 | `GET` | `/binaries/{binary_id}/analysis` | 최신 분석 작업 상태/결과 |
-| `GET` | `/binaries/{binary_id}/info` | ELF 정규화 정보 |
+| `GET` | `/binaries/{binary_id}/info` | format-aware 정규화 정보 |
 | `GET` | `/binaries/{binary_id}/elf` | Phase 2 ELF metadata 계약 |
+| `GET` | `/binaries/{binary_id}/pe` | PE32/PE32+ metadata; non-PE는 거부 |
 | `GET` | `/binaries/{binary_id}/checksec` | 보호 기법 |
 | `GET` | `/binaries/{binary_id}/symbols` | 종류별 paginated symbol |
 | `GET` | `/binaries/{binary_id}/imports` | paginated imports |
@@ -194,6 +223,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/strings` | 문자열 |
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
 | `GET` | `/binaries/{binary_id}/hex` | paginated hex |
+| `GET` | `/binaries/{binary_id}/entropy` | 전체/region entropy |
 | `POST` | `/payload/cyclic` | cyclic pattern |
 | `POST` | `/payload/cyclic/find` | cyclic offset |
 | `POST` | `/payload/pack` | 정수 packing |
@@ -267,7 +297,9 @@ Pwnable_Lab/
 │   │   ├── challenge/              # 교육용 fixture
 │   │   ├── database/               # models/repository/session
 │   │   ├── elf/                    # parser/builder
-│   │   ├── jobs/                   # Phase 1 inline queue abstraction
+│   │   ├── jobs/                   # inline queue abstraction
+│   │   ├── formats/                # format detection and intake policy
+│   │   ├── pe/                     # bounded PE parser/analyzer
 │   │   └── payload/
 │   └── tests/
 ├── frontend/
@@ -291,6 +323,8 @@ Pwnable_Lab/
 
 - 업로드 파일은 backend 호스트에서 실행하지 않습니다.
 - MIME이나 사용자 파일명을 저장 경로로 신뢰하지 않습니다.
+- PE는 전체 헤더/section 범위를 검증하고, raw는 텍스트/아카이브와 구분합니다.
+- raw architecture, entry point, base address, memory permission은 임의로 추측하지 않습니다.
 - 32MiB 누적 크기와 1MiB read chunk를 서버에서 강제합니다.
 - 검증 전 임시 파일은 실패 시 제거하고, 검증 후 SHA-256 이름으로 원자적으로 채택합니다.
 - 위험 함수 결과는 symbol/direct-call heuristic이며 취약점을 확정하지 않습니다.
@@ -302,7 +336,7 @@ Pwnable_Lab/
 
 ## 로드맵
 
-- Phase 2: 핵심 정적 ELF/checksec/GOT/PLT/relocation/evidence 구현 완료; 데이터 흐름 정밀화 지속
+- Phase 2: ELF 정적 분석과 PE/raw format-aware intake 구현 완료; 데이터 흐름 정밀화 지속
 - Phase 3: 함수/CFG/xref/고급 gadget과 ROP Studio
 - Phase 4: core/GDB log/stack/memory/crash 분석
 - Phase 5: 근거 기반 exploit strategy와 pwntools draft

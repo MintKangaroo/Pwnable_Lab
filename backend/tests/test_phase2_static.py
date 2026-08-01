@@ -211,6 +211,6 @@ def test_phase2_api_contracts(client, dynamic_fixture: bytes):
 
     analysis = client.post(f"/api/v1/binaries/{binary_id}/analyze")
     assert analysis.status_code == 202
-    assert analysis.json()["analyzer_version"] == "2.0.0"
+    assert analysis.json()["analyzer_version"] == "3.0.0"
     assert analysis.json()["result"]["elf"]["relocation_count"] > 0
     assert analysis.json()["result"]["checksec"]["protections"]

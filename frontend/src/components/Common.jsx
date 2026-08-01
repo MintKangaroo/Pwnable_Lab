@@ -151,7 +151,7 @@ const statusMeta = {
   not_started: ['?', 'Not analyzed', 'unknown'],
   queued: ['◇', 'Queued', 'info'],
   running: ['◐', 'Running', 'info'],
-  completed: ['✓', 'Verified', 'success'],
+  completed: ['✓', 'Completed', 'success'],
   failed: ['×', 'Failed', 'danger'],
 };
 

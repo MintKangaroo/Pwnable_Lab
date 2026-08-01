@@ -1,5 +1,16 @@
 # Static Analyzers
 
+## 포맷 탐지
+
+입력은 파일명이나 MIME가 아닌 실제 byte signature와 구조로 판정한다.
+
+- ELF: magic 후 pyelftools 전체 구조 검증
+- PE: MZ, `e_lfanew`, PE signature, optional header, section raw range 검증
+- raw: 아카이브/일반 텍스트를 제외한 binary-like bytes
+- ZIP, TAR, gzip, bzip2, XZ, 7-Zip, RAR, Zstandard: 기본 거부
+
+`MZ`로 시작하는 손상 PE를 raw로 강등하지 않고 parser error로 격리한다.
+
 ## 정규화 계층
 
 `pwnable_lab.elf.parser`는 pyelftools 결과를 framework-independent dataclass로 변환한다.
@@ -16,6 +27,35 @@
 - static/dynamic linking classification
 
 업로드 바이너리를 파싱 과정에서 실행하지 않는다.
+
+## PE32/PE32+
+
+외부 명령어 없이 bounded parser로 다음을 읽는다.
+
+- COFF/optional header, image base, entry RVA, subsystem, DLL characteristics
+- section RVA/raw range/permission/entropy
+- import DLL, import name/ordinal, IAT address
+- named export, ordinal, address
+- base relocation block
+- ASLR, DEP/NX Compat, High Entropy VA, CFG, Force Integrity, AppContainer,
+  NO_SEH, Authenticode certificate-table presence, RWX section
+
+`DYNAMIC_BASE`가 있어도 base relocation이 없으면 ASLR을 효과적으로 활성화된
+상태로 표시하지 않는다. CFG는 compatibility declaration으로 표시하고 runtime
+enforcement를 확정하지 않는다. Authenticode는 certificate table 존재만 탐지하며
+서명 유효성이나 trust chain을 검증했다고 표시하지 않는다.
+
+## Raw binary
+
+SHA-256, 크기, entropy, ASCII/UTF-16LE strings, hex는 format-neutral로 제공한다.
+architecture, bitness, endian, entry, base address, memory permissions, loader mitigation은
+`unknown`으로 유지한다. x86/x86-64 디스어셈블리는 사용자가 architecture와
+base address를 제공한 경우에만 수행한다.
+
+## Entropy
+
+전체 파일과 ELF/PE section 또는 bounded raw window의 Shannon entropy를 계산한다.
+높은 entropy 하나만으로 packing/encryption/obfuscation을 확정하지 않는다.
 
 ## GOT와 PLT
 

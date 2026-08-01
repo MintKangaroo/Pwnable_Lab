@@ -29,6 +29,11 @@ def test_phase1_migration_upgrades_legacy_sqlite(tmp_path, monkeypatch):
             correct INTEGER NOT NULL,
             created_at DATETIME NOT NULL
         );
+        INSERT INTO binaries (sha256, filename, size, machine, bits, created_at)
+        VALUES (
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            'legacy.elf', 4, 'EM_X86_64', 64, '2026-01-01 00:00:00'
+        );
         """)
     connection.close()
 
@@ -46,7 +51,11 @@ def test_phase1_migration_upgrades_legacy_sqlite(tmp_path, monkeypatch):
         )
     }
     columns = {row[1] for row in migrated.execute("PRAGMA table_info(binaries)")}
+    format_value = migrated.execute(
+        "SELECT artifact_format FROM binaries LIMIT 1"
+    ).fetchone()
     migrated.close()
 
     assert {"analysis_jobs", "audit_logs", "alembic_version"} <= tables
-    assert {"analysis_status", "updated_at"} <= columns
+    assert {"analysis_status", "updated_at", "artifact_format"} <= columns
+    assert format_value is not None and format_value[0] == "ELF"

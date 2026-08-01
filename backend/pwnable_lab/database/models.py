@@ -22,6 +22,7 @@ class BinaryRecord(Base):
     sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
     filename: Mapped[str] = mapped_column(String(255))
     size: Mapped[int] = mapped_column(Integer)
+    artifact_format: Mapped[str] = mapped_column(String(16), default="ELF")
     machine: Mapped[str] = mapped_column(String(32), default="")
     bits: Mapped[int] = mapped_column(Integer, default=0)
     analysis_status: Mapped[str] = mapped_column(String(16), default="not_started")

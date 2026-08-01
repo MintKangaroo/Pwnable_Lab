@@ -42,10 +42,17 @@ class BinaryRepository:
         return os.path.join(self.storage_dir, sha256)
 
     def store(
-        self, data: bytes, filename: str, machine: str, bits: int
+        self,
+        data: bytes,
+        filename: str,
+        machine: str,
+        bits: int,
+        artifact_format: str = "ELF",
     ) -> BinaryRecord:
         staged = self.storage.stage_bytes(data)
-        return self.store_staged(staged, filename, machine, bits)
+        return self.store_staged(
+            staged, filename, machine, bits, artifact_format=artifact_format
+        )
 
     def store_staged(
         self,
@@ -53,6 +60,7 @@ class BinaryRepository:
         filename: str,
         machine: str,
         bits: int,
+        artifact_format: str = "ELF",
     ) -> BinaryRecord:
         self.storage.commit(staged)
         decoded_name = unquote(filename, errors="replace")
@@ -69,6 +77,7 @@ class BinaryRepository:
                 sha256=staged.sha256,
                 filename=safe_name,
                 size=staged.size,
+                artifact_format=artifact_format,
                 machine=machine,
                 bits=bits,
             )
@@ -78,7 +87,12 @@ class BinaryRepository:
                     action="binary.uploaded",
                     resource_type="binary",
                     resource_id=staged.sha256,
-                    detail={"size": staged.size, "machine": machine, "bits": bits},
+                    detail={
+                        "size": staged.size,
+                        "format": artifact_format,
+                        "machine": machine,
+                        "bits": bits,
+                    },
                 )
             )
             try:
@@ -147,8 +161,8 @@ class BinaryRepository:
         self,
         sha256: str,
         *,
-        analyzer_name: str = "phase1_metadata",
-        analyzer_version: str = "1.0.0",
+        analyzer_name: str = "static_binary",
+        analyzer_version: str = "3.0.0",
     ) -> AnalysisJobRecord:
         with self.session_factory() as session:
             binary = session.get(BinaryRecord, sha256)
@@ -162,7 +176,9 @@ class BinaryRepository:
                 analyzer_name=analyzer_name,
                 analyzer_version=analyzer_version,
                 confidence=1.0,
-                evidence=["ELF structure was validated during upload."],
+                evidence=[
+                    f"{binary.artifact_format} structure or raw-binary policy was validated during upload."
+                ],
             )
             session.add(job)
             session.add(

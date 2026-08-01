@@ -1,7 +1,8 @@
 # PwnPilot API
 
 기본 prefix는 `/api/v1`이다. 기존 `/api`는 호환 경로이며 신규 클라이언트는 사용하지 않는다.
-`binary_id`는 현재 SHA-256과 동일하다.
+`binary_id`는 현재 SHA-256과 동일하다. 업로드 응답과 binary 목록은
+`format` (`ELF`, `PE`, `RAW`)을 포함한다.
 
 ## Artifact lifecycle
 
@@ -15,7 +16,26 @@ POST /binaries/{binary_id}/analyze
   → queued → running → completed | failed
 ```
 
-업로드 파일은 API 호스트에서 실행되지 않는다.
+업로드 파일은 API 호스트에서 실행되지 않는다. MIME과 파일명은 포맷 판정에
+사용하지 않는다.
+
+## Format-aware endpoints
+
+| Method | Path | 결과 |
+|---|---|---|
+| `GET` | `/binaries/{id}/info` | ELF/PE/raw 공통 metadata |
+| `GET` | `/binaries/{id}/elf` | ELF 전용 metadata; 다른 포맷은 400 |
+| `GET` | `/binaries/{id}/pe` | PE32/PE32+ 전용 metadata; 다른 포맷은 400 |
+| `GET` | `/binaries/{id}/entropy` | global/region Shannon entropy |
+| `GET` | `/binaries/{id}/disassembly` | ELF/PE x86 또는 opt-in raw x86 디스어셈블리 |
+
+Raw 디스어셈블리는 `architecture=x86|x86_64`를 반드시 전달해야 하며,
+`base_address`는 사용자가 알고 있는 매핑 주소를 전달한다. 두 값은 서버가 추측하지
+않는다.
+
+```text
+GET /api/v1/binaries/{id}/disassembly?architecture=x86_64&base_address=4194304
+```
 
 ## Phase 2 ELF endpoints
 
@@ -32,6 +52,10 @@ POST /binaries/{binary_id}/analyze
 | `GET` | `/binaries/{id}/got` | relocation으로 검증된 GOT target |
 | `GET` | `/binaries/{id}/plt` | PLT layout에서 파생한 stub candidate |
 | `GET` | `/binaries/{id}/vulns` | 위험 API와 direct-call 후보 |
+
+PE에서 `imports`, `exports`, `functions`, `relocations`, `libraries`는 PE 테이블을
+정규화해 반환한다. GOT/PLT와 ROP gadget 스캔은 현재 ELF 전용이며 PE/raw
+요청은 지원하지 않는 기능으로 명시적으로 거부된다.
 
 `symbols`의 `kind`는 `all`, `static`, `dynamic`, `imports`, `exports`, `functions` 중 하나다.
 `offset` 기본값은 0, `limit` 기본값은 200이며 최대 5000이다.
@@ -59,3 +83,6 @@ POST /binaries/{binary_id}/analyze
 오류는 구조화된 `error`와 사용자용 `detail`을 반환한다. malformed ELF는 전체 서버를
 중단시키지 않고 4xx 응답으로 격리된다. pagination 범위를 벗어난 page는 빈 `items`를
 반환한다.
+
+malformed PE는 422, 일반 텍스트와 ZIP/TAR/gzip/7-Zip/RAR 등 archive는 415로
+거부한다.

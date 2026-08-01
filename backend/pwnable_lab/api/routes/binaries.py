@@ -1,4 +1,4 @@
-"""바이너리 업로드 및 정적 분석 라우트."""
+"""ELF, PE, raw binary 업로드 및 정적 분석 라우트."""
 
 from __future__ import annotations
 
@@ -44,16 +44,22 @@ async def upload_binary(
             chunk_bytes=settings.upload_chunk_bytes,
         )
         data = await run_in_threadpool(staged.path.read_bytes)
-        # 포맷 화이트리스트: ELF만 허용하고 전체 구조도 채택 전에 검증한다.
-        img = await run_in_threadpool(service.image, data)
+        # MIME/파일명을 신뢰하지 않고 포맷 구조 또는 raw 정책을 검증한다.
+        inspection = await run_in_threadpool(service.inspect, data)
         record = await run_in_threadpool(
-            repo.store_staged, staged, filename, img.machine, img.bits
+            repo.store_staged,
+            staged,
+            filename,
+            inspection.machine,
+            inspection.bits,
+            inspection.format.value,
         )
         return UploadResponse(
             binary_id=record.sha256,
             sha256=record.sha256,
             filename=record.filename,
             size=record.size,
+            format=record.artifact_format,
             analysis_status=record.analysis_status,
         )
     finally:
@@ -71,6 +77,7 @@ def list_binaries(
             sha256=r.sha256,
             filename=r.filename,
             size=r.size,
+            format=r.artifact_format,
             machine=r.machine,
             bits=r.bits,
             analysis_status=r.analysis_status,
@@ -89,6 +96,7 @@ def binary_detail(
         sha256=record.sha256,
         filename=record.filename,
         size=record.size,
+        format=record.artifact_format,
         machine=record.machine,
         bits=record.bits,
         analysis_status=record.analysis_status,
@@ -163,7 +171,18 @@ def binary_elf(
     service: AnalysisService = Depends(get_service),
 ) -> dict:
     """Phase 2 comprehensive ELF metadata contract."""
-    return service.info(repo.load_bytes(sha256))
+    return service.elf_info(repo.load_bytes(sha256))
+
+
+@router.get("/{sha256}/pe")
+def binary_pe(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """Validated PE32/PE32+ metadata; rejects non-PE artifacts."""
+
+    return service.pe_info(repo.load_bytes(sha256))
 
 
 @router.get("/{sha256}/checksec")
@@ -301,15 +320,32 @@ def binary_strings(
     return service.strings(repo.load_bytes(sha256), min_length=min_length)
 
 
+@router.get("/{sha256}/entropy")
+def binary_entropy(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.entropy(repo.load_bytes(sha256))
+
+
 @router.get("/{sha256}/disassembly")
 def binary_disasm(
     sha256: str,
-    address: int | None = Query(default=None),
+    address: int | None = Query(default=None, ge=0, le=0xFFFFFFFFFFFFFFFF),
     count: int = Query(default=200, ge=1, le=20000),
+    architecture: Literal["x86", "x86_64"] | None = Query(default=None),
+    base_address: int = Query(default=0, ge=0, le=0xFFFFFFFFFFFFFFFF),
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
 ) -> list[dict]:
-    return service.disassembly(repo.load_bytes(sha256), address=address, count=count)
+    return service.disassembly(
+        repo.load_bytes(sha256),
+        address=address,
+        count=count,
+        architecture=architecture,
+        base_address=base_address,
+    )
 
 
 @router.get("/{sha256}/hex")

@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pwnable-lab"
 version = "1.0.0"
-description = "A safe web playground for ELF analysis, exploit payload construction, and pwn challenges."
-readme = { text = "Pwnable Lab backend — ELF static analysis, payload tools, and deterministic pwn challenges.", content-type = "text/markdown" }
+description = "A safe web workspace for ELF, PE, and raw-binary static analysis and pwn education."
+readme = { text = "PwnPilot backend — format-aware static analysis, payload tools, and deterministic pwn challenges.", content-type = "text/markdown" }
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "MintKangaroo" }]

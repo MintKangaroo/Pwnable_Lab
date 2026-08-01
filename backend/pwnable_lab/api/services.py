@@ -3,28 +3,96 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 from pwnable_lab.analyzer.checksec import run_checksec
 from pwnable_lab.analyzer.disasm import disassemble
+from pwnable_lab.analyzer.entropy import raw_entropy_windows, shannon_entropy
 from pwnable_lab.analyzer.gadgets import find_gadgets, search_gadgets
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import ElfImage, parse_elf
+from pwnable_lab.errors import AnalysisError
+from pwnable_lab.formats import ArtifactFormat, detect_format
+from pwnable_lab.pe.analyzer import (
+    disassemble_pe,
+    disassemble_raw,
+    pe_checksec,
+    raw_checksec,
+    scan_pe_imports,
+)
+from pwnable_lab.pe.parser import parse_pe
+
+
+@dataclass(frozen=True)
+class ArtifactInspection:
+    format: ArtifactFormat
+    machine: str
+    bits: int
+    verification: str
+    evidence: list[str]
 
 
 class AnalysisService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
+    def inspect(self, data: bytes) -> ArtifactInspection:
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.ELF:
+            elf_image = parse_elf(data)
+            return ArtifactInspection(
+                artifact_format,
+                elf_image.machine,
+                elf_image.bits,
+                "verified",
+                ["ELF magic and complete pyelftools structure validation passed"],
+            )
+        if artifact_format is ArtifactFormat.PE:
+            pe_image = parse_pe(data)
+            return ArtifactInspection(
+                artifact_format,
+                pe_image.machine,
+                pe_image.bits,
+                "verified",
+                ["MZ, PE signature, optional header, and section table validated"],
+            )
+        return ArtifactInspection(
+            artifact_format,
+            "UNKNOWN",
+            0,
+            "unknown",
+            ["Bytes passed the raw-binary heuristic; architecture was not inferred"],
+        )
+
     def image(self, data: bytes) -> ElfImage:
+        """Compatibility helper for callers that explicitly require an ELF."""
+
+        self._require_format(data, ArtifactFormat.ELF)
         return parse_elf(data)
 
     def info(self, data: bytes) -> dict:
-        img = self.image(data)
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.PE:
+            return self._pe_info(data)
+        if artifact_format is ArtifactFormat.RAW:
+            return self._raw_info(data)
+        return self._elf_info(data)
+
+    def elf_info(self, data: bytes) -> dict:
+        self._require_format(data, ArtifactFormat.ELF)
+        return self._elf_info(data)
+
+    def pe_info(self, data: bytes) -> dict:
+        self._require_format(data, ArtifactFormat.PE)
+        return self._pe_info(data)
+
+    def _elf_info(self, data: bytes) -> dict:
+        img = parse_elf(data)
         return {
+            "format": "ELF",
             "sha256": hashlib.sha256(data).hexdigest(),
             "size": len(data),
             "bits": img.bits,
@@ -36,6 +104,8 @@ class AnalysisService:
             "symbols": [asdict(s) for s in img.symbols],
             "segments": [asdict(s) for s in img.segments],
             "dynamic_symbols": [asdict(s) for s in img.dynamic_symbols],
+            "imports": [asdict(s) for s in img.imports],
+            "exports": [asdict(s) for s in img.exports],
             "dynamic_tags": img.dynamic_tags,
             "interpreter": img.interpreter,
             "needed_libraries": img.needed_libraries,
@@ -47,22 +117,110 @@ class AnalysisService:
             "build_id": img.build_id,
             "gnu_properties": img.gnu_properties,
             "relocation_count": len(img.relocations),
+            "global_entropy": round(shannon_entropy(data), 4),
+        }
+
+    def _pe_info(self, data: bytes) -> dict:
+        image = parse_pe(data)
+        symbols = [self._pe_export_symbol(item) for item in image.exports]
+        dynamic_symbols = [self._pe_import_symbol(item) for item in image.imports]
+        sections = [asdict(section) for section in image.sections]
+        segments = [self._pe_segment(section) for section in image.sections]
+        return {
+            "format": "PE",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+            "bits": image.bits,
+            "endian": "little",
+            "machine": image.machine,
+            "type": image.pe_type,
+            "file_type": image.file_type,
+            "entry": image.entry or None,
+            "entry_rva": image.entry_rva,
+            "image_base": image.image_base,
+            "sections": sections,
+            "segments": segments,
+            "symbols": symbols,
+            "dynamic_symbols": dynamic_symbols,
+            "imports": [asdict(item) for item in image.imports],
+            "exports": [asdict(item) for item in image.exports],
+            "interpreter": None,
+            "needed_libraries": image.needed_libraries,
+            "linked_libc": None,
+            "linking": "dynamic" if image.imports else "unknown",
+            "soname": None,
+            "rpath": [],
+            "runpath": [],
+            "build_id": None,
+            "gnu_properties": {},
+            "relocation_count": len(image.relocations),
+            "subsystem": image.subsystem,
+            "timestamp": image.timestamp,
+            "dll_characteristics": image.dll_characteristics,
+            "size_of_image": image.size_of_image,
+            "global_entropy": round(shannon_entropy(data), 4),
+        }
+
+    def _raw_info(self, data: bytes) -> dict:
+        return {
+            "format": "RAW",
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "size": len(data),
+            "bits": 0,
+            "endian": "unknown",
+            "machine": "UNKNOWN",
+            "type": "RAW",
+            "entry": None,
+            "sections": [],
+            "segments": [],
+            "symbols": [],
+            "dynamic_symbols": [],
+            "imports": [],
+            "exports": [],
+            "interpreter": None,
+            "needed_libraries": [],
+            "linked_libc": None,
+            "linking": "unknown",
+            "soname": None,
+            "rpath": [],
+            "runpath": [],
+            "build_id": None,
+            "gnu_properties": {},
+            "relocation_count": 0,
+            "global_entropy": round(shannon_entropy(data), 4),
+            "analysis_limitations": [
+                "Architecture, load address, entry point, and memory permissions are unknown",
+                "Disassembly requires explicit user-supplied architecture and base address",
+            ],
         }
 
     def checksec(self, data: bytes) -> dict:
-        return run_checksec(self.image(data)).as_dict()
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.ELF:
+            result = run_checksec(parse_elf(data)).as_dict()
+            result["format"] = "ELF"
+            return result
+        if artifact_format is ArtifactFormat.PE:
+            return pe_checksec(parse_pe(data))
+        return raw_checksec()
 
     def vulns(self, data: bytes) -> list[dict]:
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.PE:
+            return scan_pe_imports(parse_pe(data))
+        if artifact_format is ArtifactFormat.RAW:
+            return []
         return [
             asdict(f)
             for f in scan_vulns(
-                self.image(data),
+                parse_elf(data),
                 max_instructions=self.settings.max_disasm_instructions,
             )
         ]
 
     def gadgets(self, data: bytes, query: str | None = None) -> list[dict]:
-        img = self.image(data)
+        self._require_format(data, ArtifactFormat.ELF, feature="ROP gadget scan")
+        img = parse_elf(data)
         gadgets = find_gadgets(
             img,
             max_gadgets=self.settings.max_gadgets,
@@ -81,7 +239,8 @@ class AnalysisService:
         ]
 
     def got_plt(self, data: bytes) -> dict:
-        return analyze_got_plt(self.image(data)).as_dict()
+        self._require_format(data, ArtifactFormat.ELF, feature="GOT/PLT analysis")
+        return analyze_got_plt(parse_elf(data)).as_dict()
 
     def symbols(
         self,
@@ -91,32 +250,56 @@ class AnalysisService:
         offset: int,
         limit: int,
     ) -> dict:
-        image = self.image(data)
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.PE:
+            pe_image = parse_pe(data)
+            if kind == "imports":
+                pe_symbols = [self._pe_import_symbol(item) for item in pe_image.imports]
+            elif kind in {"exports", "functions", "static"}:
+                pe_symbols = [self._pe_export_symbol(item) for item in pe_image.exports]
+            elif kind == "dynamic":
+                pe_symbols = [self._pe_import_symbol(item) for item in pe_image.imports]
+            else:
+                pe_symbols = [
+                    *[self._pe_export_symbol(item) for item in pe_image.exports],
+                    *[self._pe_import_symbol(item) for item in pe_image.imports],
+                ]
+            return _page(pe_symbols, offset=offset, limit=limit)
+        if artifact_format is ArtifactFormat.RAW:
+            return _page([], offset=offset, limit=limit)
+        elf_image = parse_elf(data)
         if kind == "static":
-            symbols = image.symbols
+            elf_symbols = elf_image.symbols
         elif kind == "dynamic":
-            symbols = image.dynamic_symbols
+            elf_symbols = elf_image.dynamic_symbols
         elif kind == "imports":
-            symbols = image.imports
+            elf_symbols = elf_image.imports
         elif kind == "exports":
-            symbols = image.exports
+            elf_symbols = elf_image.exports
         elif kind == "functions":
-            symbols = [
+            elf_symbols = [
                 symbol
-                for symbol in image.symbols + image.dynamic_symbols
+                for symbol in elf_image.symbols + elf_image.dynamic_symbols
                 if symbol.defined and symbol.stype == "STT_FUNC"
             ]
         else:
-            symbols = image.symbols + image.dynamic_symbols
-        normalized = [asdict(symbol) for symbol in symbols]
+            elf_symbols = elf_image.symbols + elf_image.dynamic_symbols
+        normalized = [asdict(symbol) for symbol in elf_symbols]
         return _page(normalized, offset=offset, limit=limit)
 
     def relocations(self, data: bytes, *, offset: int, limit: int) -> dict:
-        relocations = [asdict(item) for item in self.image(data).relocations]
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.PE:
+            relocations = [asdict(item) for item in parse_pe(data).relocations]
+        elif artifact_format is ArtifactFormat.ELF:
+            relocations = [asdict(item) for item in parse_elf(data).relocations]
+        else:
+            relocations = []
         return _page(relocations, offset=offset, limit=limit)
 
     def got_entries(self, data: bytes, *, offset: int, limit: int) -> dict:
-        report = analyze_got_plt(self.image(data))
+        self._require_format(data, ArtifactFormat.ELF, feature="GOT analysis")
+        report = analyze_got_plt(parse_elf(data))
         result = report.as_dict()
         entries = result.pop("entries")
         result["entries"] = entries[offset : offset + limit]
@@ -128,55 +311,154 @@ class AnalysisService:
         return result
 
     def plt_entries(self, data: bytes, *, offset: int, limit: int) -> dict:
-        report = analyze_got_plt(self.image(data))
+        self._require_format(data, ArtifactFormat.ELF, feature="PLT analysis")
+        report = analyze_got_plt(parse_elf(data))
         entries = [asdict(entry) for entry in report.plt_entries]
         return _page(entries, offset=offset, limit=limit)
 
     def libraries(self, data: bytes) -> dict:
-        image = self.image(data)
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.PE:
+            pe_image = parse_pe(data)
+            return {
+                "format": "PE",
+                "linking": "dynamic" if pe_image.imports else "unknown",
+                "interpreter": None,
+                "needed": pe_image.needed_libraries,
+                "linked_libc": None,
+                "soname": None,
+                "rpath": [],
+                "runpath": [],
+                "verification": "verified",
+                "source": "PE import directory",
+                "confidence": 1.0,
+            }
+        if artifact_format is ArtifactFormat.RAW:
+            return {
+                "format": "RAW",
+                "linking": "unknown",
+                "interpreter": None,
+                "needed": [],
+                "linked_libc": None,
+                "soname": None,
+                "rpath": [],
+                "runpath": [],
+                "verification": "unknown",
+                "source": "No recognized loader metadata",
+                "confidence": 1.0,
+            }
+        elf_image = parse_elf(data)
         return {
-            "linking": image.linking,
-            "interpreter": image.interpreter,
-            "needed": image.needed_libraries,
-            "linked_libc": image.linked_libc,
-            "soname": image.soname,
-            "rpath": image.rpath,
-            "runpath": image.runpath,
+            "format": "ELF",
+            "linking": elf_image.linking,
+            "interpreter": elf_image.interpreter,
+            "needed": elf_image.needed_libraries,
+            "linked_libc": elf_image.linked_libc,
+            "soname": elf_image.soname,
+            "rpath": elf_image.rpath,
+            "runpath": elf_image.runpath,
             "verification": "verified",
             "source": "ELF program headers and dynamic tags",
             "confidence": 1.0,
         }
 
     def analysis_summary(self, data: bytes, binary_id: str) -> dict:
-        image = self.image(data)
-        got_plt = analyze_got_plt(image)
+        artifact_format = detect_format(data)
+        info = self.info(data)
+        checksec = self.checksec(data)
+        summary_key = artifact_format.value.lower()
+        summary = {
+            "sha256": binary_id,
+            "size": len(data),
+            "format": artifact_format.value,
+            "bits": info["bits"],
+            "endian": info["endian"],
+            "machine": info["machine"],
+            "type": info["type"],
+            "entry": info["entry"],
+            "linking": info["linking"],
+            "needed_libraries": info["needed_libraries"],
+            "section_count": len(info["sections"]),
+            "segment_count": len(info["segments"]),
+            "symbol_count": len(info["symbols"]) + len(info["dynamic_symbols"]),
+            "import_count": len(info.get("imports", [])),
+            "export_count": len(info.get("exports", [])),
+            "relocation_count": info["relocation_count"],
+            "global_entropy": info["global_entropy"],
+        }
+        if artifact_format is ArtifactFormat.ELF:
+            image = parse_elf(data)
+            got_plt = analyze_got_plt(image)
+            summary.update(
+                {
+                    "interpreter": image.interpreter,
+                    "linked_libc": image.linked_libc,
+                    "build_id": image.build_id,
+                    "got_entry_count": len(got_plt.got_entries),
+                    "plt_entry_count": len(got_plt.plt_entries),
+                    "import_count": len(image.imports),
+                    "export_count": len(image.exports),
+                }
+            )
         return {
+            "verification": (
+                "unknown" if artifact_format is ArtifactFormat.RAW else "verified"
+            ),
+            "source": (
+                "raw byte heuristics"
+                if artifact_format is ArtifactFormat.RAW
+                else "validated static executable parser"
+            ),
+            "confidence": 0.55 if artifact_format is ArtifactFormat.RAW else 1.0,
+            "format": artifact_format.value,
+            summary_key: summary,
+            "checksec": checksec,
+        }
+
+    def entropy(self, data: bytes) -> dict:
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.ELF:
+            image = parse_elf(data)
+            regions = [
+                {
+                    "name": section.name,
+                    "offset": section.offset,
+                    "size": section.size,
+                    "entropy": round(
+                        shannon_entropy(
+                            data[section.offset : section.offset + section.size]
+                        ),
+                        4,
+                    ),
+                    "executable": section.executable,
+                    "writable": section.writable,
+                    "verification": "verified",
+                }
+                for section in image.sections
+                if section.size
+            ]
+        elif artifact_format is ArtifactFormat.PE:
+            regions = [
+                {
+                    "name": section.name,
+                    "offset": section.offset,
+                    "size": section.size,
+                    "entropy": section.entropy,
+                    "executable": section.executable,
+                    "writable": section.writable,
+                    "verification": "verified",
+                }
+                for section in parse_pe(data).sections
+                if section.size
+            ]
+        else:
+            regions = raw_entropy_windows(data)
+        return {
+            "format": artifact_format.value,
+            "global_entropy": round(shannon_entropy(data), 4),
+            "regions": regions,
+            "interpretation": "Entropy is evidence only and never confirms packing by itself.",
             "verification": "verified",
-            "source": "pyelftools normalized ELF parser",
-            "confidence": 1.0,
-            "elf": {
-                "sha256": binary_id,
-                "size": len(data),
-                "bits": image.bits,
-                "endian": image.endian,
-                "machine": image.machine,
-                "type": image.e_type,
-                "entry": image.entry,
-                "interpreter": image.interpreter,
-                "linking": image.linking,
-                "linked_libc": image.linked_libc,
-                "needed_libraries": image.needed_libraries,
-                "build_id": image.build_id,
-                "section_count": len(image.sections),
-                "segment_count": len(image.segments),
-                "symbol_count": len(image.symbols) + len(image.dynamic_symbols),
-                "import_count": len(image.imports),
-                "export_count": len(image.exports),
-                "relocation_count": len(image.relocations),
-                "got_entry_count": len(got_plt.got_entries),
-                "plt_entry_count": len(got_plt.plt_entries),
-            },
-            "checksec": run_checksec(image).as_dict(),
         }
 
     def strings(self, data: bytes, min_length: int = 4) -> list[dict]:
@@ -185,13 +467,39 @@ class AnalysisService:
         )
         return [asdict(s) for s in strings]
 
-    def disassembly(self, data: bytes, address: int | None, count: int) -> list[dict]:
-        insns = disassemble(
-            self.image(data),
-            address=address,
-            count=count,
-            max_instructions=self.settings.max_disasm_instructions,
-        )
+    def disassembly(
+        self,
+        data: bytes,
+        address: int | None,
+        count: int,
+        *,
+        architecture: str | None = None,
+        base_address: int = 0,
+    ) -> list[dict]:
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.ELF:
+            insns = disassemble(
+                parse_elf(data),
+                address=address,
+                count=count,
+                max_instructions=self.settings.max_disasm_instructions,
+            )
+        elif artifact_format is ArtifactFormat.PE:
+            insns = disassemble_pe(
+                parse_pe(data),
+                address=address,
+                count=count,
+                max_instructions=self.settings.max_disasm_instructions,
+            )
+        else:
+            insns = disassemble_raw(
+                data,
+                architecture=architecture,
+                base_address=base_address,
+                address=address,
+                count=count,
+                max_instructions=self.settings.max_disasm_instructions,
+            )
         return [
             {
                 "address": i.address,
@@ -224,6 +532,65 @@ class AnalysisService:
             "total_pages": (len(data) + size - 1) // size,
             "rows": rows,
         }
+
+    @staticmethod
+    def _pe_import_symbol(item) -> dict:  # noqa: ANN001
+        return {
+            "name": item.name,
+            "addr": item.address,
+            "size": 0,
+            "stype": "IMPORT",
+            "binding": item.library,
+            "section_index": "IAT",
+            "visibility": "DEFAULT",
+            "table": "imports",
+            "defined": False,
+            "library": item.library,
+            "verification": item.verification,
+        }
+
+    @staticmethod
+    def _pe_export_symbol(item) -> dict:  # noqa: ANN001
+        return {
+            "name": item.name,
+            "addr": item.address,
+            "size": 0,
+            "stype": "EXPORT",
+            "binding": "GLOBAL",
+            "section_index": item.ordinal,
+            "visibility": "DEFAULT",
+            "table": "exports",
+            "defined": True,
+            "verification": item.verification,
+        }
+
+    @staticmethod
+    def _pe_segment(section) -> dict:  # noqa: ANN001
+        return {
+            "ptype": f"SECTION:{section.name}",
+            "offset": section.offset,
+            "vaddr": section.addr,
+            "filesz": section.size,
+            "memsz": section.virtual_size,
+            "flags": section.characteristics,
+            "readable": section.readable,
+            "writable": section.writable,
+            "executable": section.executable,
+        }
+
+    @staticmethod
+    def _require_format(
+        data: bytes,
+        expected: ArtifactFormat,
+        *,
+        feature: str | None = None,
+    ) -> None:
+        actual = detect_format(data)
+        if actual is not expected:
+            subject = feature or f"{expected.value} metadata"
+            raise AnalysisError(
+                f"{subject} is not available for {actual.value} artifacts."
+            )
 
 
 def _page(items: list[dict], *, offset: int, limit: int) -> dict:

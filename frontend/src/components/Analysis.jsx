@@ -10,15 +10,31 @@ import {
   StatusBadge,
 } from './Common.jsx';
 
-const TABS = [
+const COMMON_TABS = [
   ['overview', 'Overview'],
   ['disassembly', 'Disassembly'],
-  ['gadgets', 'ROP Gadgets'],
   ['symbols', 'Symbols'],
   ['strings', 'Strings'],
-  ['got', 'GOT / PLT'],
   ['hex', 'Hex View'],
 ];
+
+const tabsForFormat = (format) => {
+  if (format === 'ELF') {
+    return [
+      COMMON_TABS[0],
+      COMMON_TABS[1],
+      ['gadgets', 'ROP Gadgets'],
+      COMMON_TABS[2],
+      COMMON_TABS[3],
+      ['got', 'GOT / PLT'],
+      COMMON_TABS[4],
+    ];
+  }
+  if (format === 'RAW') {
+    return [COMMON_TABS[0], COMMON_TABS[1], COMMON_TABS[3], COMMON_TABS[4]];
+  }
+  return COMMON_TABS;
+};
 
 const severityTone = {
   critical: 'danger',
@@ -40,8 +56,18 @@ const protectionLabels = {
   rpath: 'RPATH',
   runpath: 'RUNPATH',
   rwx_segments: 'RWX SEGMENTS',
+  rwx_sections: 'RWX SECTIONS',
   stripped: 'SYMBOL STRIPPING',
   static_linking: 'LINKING MODE',
+  aslr: 'ASLR',
+  dep: 'DEP / NX COMPAT',
+  high_entropy_va: 'HIGH ENTROPY VA',
+  control_flow_guard: 'CONTROL FLOW GUARD',
+  force_integrity: 'FORCE INTEGRITY',
+  app_container: 'APP CONTAINER',
+  no_seh: 'NO SEH',
+  authenticode: 'AUTHENTICODE',
+  loader_mitigations: 'LOADER MITIGATIONS',
 };
 
 const verificationSymbols = {
@@ -51,7 +77,7 @@ const verificationSymbols = {
 };
 
 function protectionTone(protection) {
-  if (protection.name === 'rwx_segments')
+  if (['rwx_segments', 'rwx_sections'].includes(protection.name))
     return protection.enabled ? 'danger' : 'positive';
   if (protection.name === 'executable_stack') {
     if (protection.enabled === null) return 'neutral';
@@ -62,11 +88,15 @@ function protectionTone(protection) {
   if (protection.name === 'stripped')
     return protection.enabled ? 'warning' : 'positive';
   if (protection.name === 'static_linking') return 'neutral';
+  if (protection.name === 'authenticode') {
+    return protection.enabled ? 'warning' : 'neutral';
+  }
+  if (protection.name === 'loader_mitigations') return 'neutral';
   if (protection.name === 'relro') {
     if (protection.state === 'full') return 'positive';
     return protection.state === 'none' ? 'danger' : 'warning';
   }
-  if (['nx', 'stack_canary'].includes(protection.name))
+  if (['nx', 'stack_canary', 'aslr', 'dep'].includes(protection.name))
     return protection.enabled ? 'positive' : 'warning';
   if (protection.name === 'pie') return protection.enabled ? 'positive' : 'warning';
   return protection.enabled ? 'positive' : 'neutral';
@@ -121,6 +151,38 @@ function Overview({ sha, info }) {
     return <Loading label="보호 기법과 공격 표면을 분석하는 중" />;
 
   const risky = findings.filter((item) => item.severity !== 'info');
+  const format = info.format || 'ELF';
+  const machine = info.machine.replace('EM_', '').replace('IMAGE_FILE_MACHINE_', '');
+  const profileDetails =
+    format === 'PE'
+      ? [
+          ['IMAGE BASE', formatHex(info.image_base)],
+          ['SUBSYSTEM', info.subsystem || 'Unknown'],
+          ['IMPORTS', `${info.imports?.length || 0} verified entries`],
+          [
+            'INDEX',
+            `${info.sections.length} sections · ${info.exports?.length || 0} exports · ${info.relocation_count || 0} relocations`,
+          ],
+        ]
+      : format === 'RAW'
+        ? [
+            ['ARCHITECTURE', 'Not inferred'],
+            ['LOAD ADDRESS', 'User input required'],
+            ['ENTROPY', Number(info.global_entropy).toFixed(4)],
+            [
+              'LIMITATIONS',
+              `${info.analysis_limitations?.length || 0} explicit constraints`,
+            ],
+          ]
+        : [
+            ['INTERPRETER', info.interpreter || 'Not present'],
+            ['LINKED LIBC', info.linked_libc || 'Not detected'],
+            ['BUILD ID', info.build_id || 'Not present'],
+            [
+              'INDEX',
+              `${info.sections.length} sections · ${info.symbols.length} symbols · ${info.relocation_count || 0} relocations`,
+            ],
+          ];
   return (
     <div className="analysis-stack">
       <section>
@@ -129,52 +191,44 @@ function Overview({ sha, info }) {
             <span>01</span>
             <h3>BINARY PROFILE</h3>
           </div>
-          <p>파서가 정규화한 ELF 핵심 메타데이터</p>
+          <p>{format} 파서가 정규화한 핵심 메타데이터</p>
         </div>
         <div className="metric-grid">
           <div className="metric">
             <small>ARCHITECTURE</small>
-            <strong>{info.machine.replace('EM_', '')}</strong>
+            <strong>{machine}</strong>
             <span>
-              {info.bits}-bit · {info.endian} endian
+              {info.bits ? `${info.bits}-bit` : 'bitness unknown'} · {info.endian}{' '}
+              endian
             </span>
           </div>
           <div className="metric">
             <small>TYPE</small>
-            <strong>{info.type.replace('ET_', '')}</strong>
-            <span>{security.pie}</span>
+            <strong>{String(info.file_type || info.type).replace('ET_', '')}</strong>
+            <span>{format}</span>
           </div>
           <div className="metric">
             <small>ENTRY POINT</small>
             <strong className="mono accent">{formatHex(info.entry)}</strong>
-            <span>program start</span>
+            <span>{info.entry === null ? 'unknown' : 'program start'}</span>
           </div>
           <div className="metric">
             <small>LINKING</small>
             <strong>{info.linking || 'unknown'}</strong>
-            <span>{info.needed_libraries?.length || 0} required libraries</span>
+            <span>
+              {format === 'RAW'
+                ? 'loader metadata unavailable'
+                : `${info.needed_libraries?.length || 0} required libraries`}
+            </span>
           </div>
         </div>
         <dl className="binary-linking-details">
-          <div>
-            <dt>INTERPRETER</dt>
-            <dd title={info.interpreter || ''}>{info.interpreter || 'Not present'}</dd>
-          </div>
-          <div>
-            <dt>LINKED LIBC</dt>
-            <dd>{info.linked_libc || 'Not detected'}</dd>
-          </div>
-          <div>
-            <dt>BUILD ID</dt>
-            <dd title={info.build_id || ''}>{info.build_id || 'Not present'}</dd>
-          </div>
-          <div>
-            <dt>INDEX</dt>
-            <dd>
-              {info.sections.length} sections · {info.symbols.length} symbols ·{' '}
-              {info.relocation_count || 0} relocations
-            </dd>
-          </div>
+          {profileDetails.map(([label, value]) => (
+            <div key={label}>
+              <dt>{label}</dt>
+              <dd title={String(value)}>{value}</dd>
+            </div>
+          ))}
         </dl>
       </section>
 
@@ -187,11 +241,9 @@ function Overview({ sha, info }) {
           <p>활성화된 보호 기법과 익스플로잇 난이도</p>
         </div>
         <div className="protection-grid">
-          {(security.protections || [])
-            .filter((item) => protectionLabels[item.name])
-            .map((protection) => (
-              <ProtectionCard key={protection.name} protection={protection} />
-            ))}
+          {(security.protections || []).map((protection) => (
+            <ProtectionCard key={protection.name} protection={protection} />
+          ))}
         </div>
       </section>
 
@@ -239,6 +291,7 @@ function Overview({ sha, info }) {
         </div>
         <DataTable
           rows={info.segments}
+          empty="로더가 검증한 메모리 매핑 정보가 없습니다."
           keyFor={(row, index) => `${row.ptype}-${index}`}
           columns={[
             { key: 'ptype', label: 'TYPE', render: (row) => <code>{row.ptype}</code> },
@@ -275,18 +328,33 @@ function Overview({ sha, info }) {
   );
 }
 
-function Disassembly({ sha }) {
+function Disassembly({ sha, info }) {
   const [instructions, setInstructions] = useState(null);
   const [count, setCount] = useState(250);
+  const [architecture, setArchitecture] = useState('x86_64');
+  const [baseAddress, setBaseAddress] = useState('0x0');
   const [error, setError] = useState('');
 
   useEffect(() => {
     setInstructions(null);
+    setError('');
+    let options = {};
+    if (info.format === 'RAW') {
+      try {
+        const parsedBase = BigInt(baseAddress.trim());
+        if (parsedBase < 0n || parsedBase > 0xffffffffffffffffn) throw new RangeError();
+        options = { architecture, baseAddress: parsedBase.toString() };
+      } catch {
+        setInstructions([]);
+        setError('RAW base address는 0부터 0xffffffffffffffff 사이의 정수여야 합니다.');
+        return;
+      }
+    }
     api
-      .disassembly(sha, count)
+      .disassembly(sha, count, options)
       .then(setInstructions)
       .catch((reason) => setError(reason.message));
-  }, [sha, count]);
+  }, [sha, count, architecture, baseAddress, info.format]);
 
   if (error) return <ErrorBanner message={error} />;
   if (!instructions) return <Loading label="Capstone 디스어셈블러 실행 중" />;
@@ -308,6 +376,29 @@ function Disassembly({ sha }) {
             <option value="500">500</option>
           </select>
         </label>
+        {info.format === 'RAW' && (
+          <div className="toolbar-actions raw-disassembly-options">
+            <label>
+              ARCH
+              <select
+                value={architecture}
+                onChange={(event) => setArchitecture(event.target.value)}
+              >
+                <option value="x86_64">x86-64</option>
+                <option value="x86">x86</option>
+              </select>
+            </label>
+            <label>
+              BASE
+              <input
+                className="mono-input"
+                value={baseAddress}
+                onChange={(event) => setBaseAddress(event.target.value)}
+                aria-label="Raw binary base address"
+              />
+            </label>
+          </div>
+        )}
       </div>
       <div className="code-view">
         {instructions.map((instruction) => {
@@ -761,7 +852,6 @@ export function Analysis({
   activeTab = 'overview',
   onTabChange = () => {},
 }) {
-  const tab = TABS.some(([id]) => id === activeTab) ? activeTab : 'overview';
   const [info, setInfo] = useState(null);
   const [contextSecurity, setContextSecurity] = useState(null);
   const [analysisStatus, setAnalysisStatus] = useState(
@@ -769,6 +859,9 @@ export function Analysis({
   );
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState('');
+  const artifactFormat = info?.format || binary?.format || 'ELF';
+  const availableTabs = tabsForFormat(artifactFormat);
+  const tab = availableTabs.some(([id]) => id === activeTab) ? activeTab : 'overview';
 
   useEffect(() => {
     Promise.all([api.info(sha), api.checksec(sha)])
@@ -802,16 +895,20 @@ export function Analysis({
           <div className="eyebrow">
             <span /> BINARY WORKSPACE
           </div>
-          <h2>{binary?.filename || 'ELF target'}</h2>
+          <h2>{binary?.filename || 'Binary target'}</h2>
           <div className="binary-context-meta">
-            <span>{binary?.machine?.replace('EM_', '') || 'Unknown arch'}</span>
+            <span>{artifactFormat}</span>
+            <span>
+              {binary?.machine?.replace('EM_', '').replace('IMAGE_FILE_MACHINE_', '') ||
+                'Unknown arch'}
+            </span>
             <span>{binary?.bits ? `${binary.bits}-bit` : 'Unknown bits'}</span>
             <code title={sha}>{sha.slice(0, 16)}</code>
             <StatusBadge status={analysisStatus} />
           </div>
         </div>
         <div className="context-actions">
-          {contextSecurity && (
+          {contextSecurity && artifactFormat === 'ELF' && (
             <div className="protection-summary" aria-label="Protection summary">
               <span>NX {contextSecurity.nx ? '✓' : '×'}</span>
               <span>PIE {contextSecurity.pie === 'PIE' ? '✓' : '×'}</span>
@@ -819,17 +916,38 @@ export function Analysis({
               <span>RELRO {contextSecurity.relro}</span>
             </div>
           )}
+          {contextSecurity && artifactFormat === 'PE' && (
+            <div className="protection-summary" aria-label="Protection summary">
+              <span>DEP {contextSecurity.nx ? '✓' : '×'}</span>
+              <span>ASLR {contextSecurity.pie === 'ASLR' ? '✓' : '×'}</span>
+              <span>
+                CFG{' '}
+                {contextSecurity.protections?.some(
+                  (item) => item.name === 'control_flow_guard' && item.enabled,
+                )
+                  ? '✓'
+                  : '?'}
+              </span>
+            </div>
+          )}
+          {contextSecurity && artifactFormat === 'RAW' && (
+            <div className="protection-summary" aria-label="Protection summary">
+              <span>ARCH ?</span>
+              <span>BASE ?</span>
+              <span>MITIGATIONS ?</span>
+            </div>
+          )}
           <button
             className="button secondary"
             disabled={analyzing}
             onClick={rerunAnalysis}
           >
-            {analyzing ? 'Analyzing ELF…' : 'Re-run static analysis'}
+            {analyzing ? 'Analyzing artifact…' : 'Re-run static analysis'}
           </button>
         </div>
       </div>
       <div className="analysis-tabs" role="tablist">
-        {TABS.map(([id, label]) => (
+        {availableTabs.map(([id, label]) => (
           <button
             role="tab"
             aria-selected={tab === id}
@@ -843,11 +961,11 @@ export function Analysis({
       </div>
       <ErrorBanner message={error} />
       {!info ? (
-        !error && <Loading label="ELF 헤더와 섹션을 파싱하는 중" />
+        !error && <Loading label="바이너리 포맷과 구조를 파싱하는 중" />
       ) : (
         <div className="tab-content">
           {tab === 'overview' && <Overview sha={sha} info={info} />}
-          {tab === 'disassembly' && <Disassembly sha={sha} />}
+          {tab === 'disassembly' && <Disassembly sha={sha} info={info} />}
           {tab === 'gadgets' && <Gadgets sha={sha} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}

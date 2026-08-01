@@ -58,8 +58,9 @@ Finding row
   → xref / argument inference / runtime evidence
 ```
 
-현재 위험 심볼 스캔은 호출 위치를 제공하지 않으므로 Phase 1 UI에서는 symbol heuristic로
-명시하며 가짜 주소 링크를 만들지 않는다.
+ELF direct-call은 확인된 call address와 제한적 인자 추정을 제공한다. PE import는
+IAT address를 검증하지만 call-site data flow를 복원하지 않았으므로 `possible/inferred`로
+표시하며 가짜 call address를 만들지 않는다.
 
 ## 5. 크래시에서 익스플로잇 전략으로 이동
 

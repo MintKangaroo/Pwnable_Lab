@@ -4,30 +4,30 @@
 
 Dashboard는 실제 API에서 다음을 표시한다.
 
-- 최근 ELF artifact와 architecture/bit/size/SHA
-- `Not analyzed`, `Queued`, `Running`, `Verified`, `Failed` 분석 상태
+- 최근 ELF/PE/raw artifact와 format/architecture/bit/size/SHA
+- `Not analyzed`, `Queued`, `Running`, `Completed`, `Failed` 분석 상태
 - 대기/실패 작업과 다음 액션
 - 최근 artifact의 Critical/High 위험 symbol 후보
 
 위험 symbol은 `Possible · static heuristic`으로 표시한다. import나 symbol 이름만으로
 실제 취약점을 확정하지 않는다.
 
-## ELF 업로드
+## 바이너리 업로드
 
-좌측 `Upload binary` 또는 Dashboard action에서 ELF를 선택한다.
+좌측 `Upload binary` 또는 Dashboard action에서 ELF, PE/EXE, raw binary를 선택한다.
 
 1. 브라우저가 파일을 `/api/v1/binaries`에 전송한다.
 2. 서버가 1MiB 이하 청크로 읽으며 32MiB 누적 제한을 적용한다.
-3. ELF magic과 구조를 검증한다.
+3. ELF/PE 구조 또는 raw-binary 정책을 검증한다.
 4. SHA-256으로 중복을 제거해 저장한다.
-5. UI가 Phase 1 정적 분석 작업을 시작한다.
+5. UI가 format-aware 정적 분석 작업을 시작한다.
 6. Binary Workspace로 이동한다.
 
 업로드 파일은 control plane에서 실행되지 않는다.
 
 ## Binary Workspace
 
-현재 탭:
+포맷별로 분석 가능한 탭만 표시한다.
 
 - **Overview**: identity, protection matrix, 위험 symbol 후보, memory segment
 - **Disassembly**: entry부터 제한된 수의 Capstone instruction
@@ -36,6 +36,12 @@ Dashboard는 실제 API에서 다음을 표시한다.
 - **Strings**: ASCII/UTF-16LE string
 - **GOT / PLT**: 관련 section과 undefined dynamic imports
 - **Hex View**: 512-byte page 기반 file view
+
+PE는 ROP Gadgets와 GOT/PLT 탭을 표시하지 않고 imports/exports를 Symbols에
+표시한다. Raw는 Overview, Disassembly, Strings, Hex View만 표시한다.
+
+Raw Disassembly에서는 architecture (`x86` 또는 `x86-64`)와 base address를
+사용자가 직접 지정한다. 플랫폼은 이 값들을 추측하지 않는다.
 
 탭은 URL에 반영되므로 새로고침, 뒤로 가기, 링크 공유가 가능하다.
 
@@ -96,9 +102,9 @@ curl -s \
 
 | Error | 의미 | 확인 |
 |---|---|---|
-| `UnsupportedFormatError` | ELF magic이 아님 | 압축/다른 format이 아닌지 확인 |
+| `UnsupportedFormatError` | 지원 포맷/raw binary가 아님 | 텍스트/압축/아카이브인지 확인 |
 | `PayloadTooLargeError` | 32MiB 기본 제한 초과 | 설정과 원본 크기 확인 |
-| `ParseError` | 손상/절단 ELF 구조 | 다른 parser/readelf로 원본 확인 |
+| `ParseError` | 손상/절단 ELF 또는 PE 구조 | 원본과 header/table 범위 확인 |
 | `NotFoundError` | artifact/job이 없음 | SHA/삭제 여부 확인 |
 | `AnalysisError` | 분석 범위/지원 architecture 문제 | 요청 count/address와 arch 확인 |
 
@@ -107,7 +113,7 @@ curl -s \
 ## 안전 수칙
 
 - 소유하거나 명시적인 권한을 받은 바이너리만 업로드한다.
-- Phase 1에는 인증과 사용자별 격리가 없으므로 공개 배포하지 않는다.
+- 현재는 인증과 사용자별 격리가 없으므로 공개 배포하지 않는다.
 - 동적 실행이 필요한 경우 Phase 6 sandbox runner가 완성될 때까지 별도 허가된 로컬
   실습 환경을 사용한다.
 - 생성한 payload를 임의 인터넷 host나 권한 없는 시스템에 사용하지 않는다.
