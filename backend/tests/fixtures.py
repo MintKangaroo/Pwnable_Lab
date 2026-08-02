@@ -116,3 +116,33 @@ def sample_control_flow_elf() -> bytes:
         nx=True,
         relro="partial",
     ).build()
+
+
+def sample_gadget_elf(*, pie: bool = False) -> bytes:
+    """ELF containing deterministic gadget-semantic fixtures."""
+
+    text = b"".join(
+        [
+            b"\x5f\xc3",  # pop rdi ; ret
+            b"\x5e\x41\x5f\xc3",  # pop rsi ; pop r15 ; ret
+            b"\xc9\xc3",  # leave ; ret
+            b"\x48\x89\x07\xc3",  # mov [rdi], rax ; ret
+            b"\x48\x83\xc4\x10\xc3",  # add rsp, 0x10 ; ret
+            b"\x48\x83\xec\x10\xc3",  # sub rsp, 0x10 ; ret
+            b"\x50\xc3",  # push rax ; ret
+            b"\x9d\xc3",  # popfq ; ret
+            b"\xff\xd0\xc3",  # call rax ; ret
+            b"\x48\x89\xc4\xc3",  # mov rsp, rax ; ret
+            b"\x48\x94\xc3",  # xchg rsp, rax ; ret
+            b"\x0f\x05",  # syscall
+            b"\xcd\x80",  # int 0x80
+            b"\xc2\x10\x00",  # ret 0x10
+        ]
+    )
+    return ElfBuilder(
+        text=text,
+        symbols=[Symbol("gadget_bank", ".text", 0, len(text))],
+        pie=pie,
+        nx=True,
+        relro="partial",
+    ).build()

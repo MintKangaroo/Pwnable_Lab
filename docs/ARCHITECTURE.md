@@ -106,7 +106,7 @@ inline queue는 요청 안에서 완료되므로 API 응답 시점에는 보통 
 - Dashboard: recent workspaces, analysis queue, 실제 symbol finding 후보
 - Binary Workspace: URL tab, binary identity, analysis status, protection context
 - Functions/CFG/Disassembly와 URL address 기반 근거 이동
-- 기존 ROP/Symbols/Strings/GOT/Hex 분석 view
+- verified gadget search, chain layout, inferred state를 분리한 3-panel ROP Studio
 - Phase 2 evidence/confidence protection matrix와 linking identity
 - Payload Studio와 교육용 Challenges
 

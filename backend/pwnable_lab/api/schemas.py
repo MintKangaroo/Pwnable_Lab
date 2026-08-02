@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class HealthResponse(BaseModel):
@@ -96,6 +96,29 @@ class OverflowResponse(BaseModel):
     length: int
     payload_hex: str
     hexdump: str
+
+
+class RopChainItem(BaseModel):
+    kind: Literal["gadget", "literal", "symbol", "padding"]
+    value: int = Field(ge=0, le=0xFFFFFFFFFFFFFFFF)
+    label: str = Field(default="", max_length=128)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def parse_integer(cls, value: object) -> object:
+        if isinstance(value, str):
+            try:
+                return int(value, 0)
+            except ValueError as exc:
+                raise ValueError(
+                    "value must be a decimal or 0x-prefixed integer"
+                ) from exc
+        return value
+
+
+class RopSimulationRequest(BaseModel):
+    items: list[RopChainItem] = Field(default_factory=list, max_length=256)
+    initial_rsp_mod16: int = Field(default=0, ge=0, le=15)
 
 
 # --- 문제 ---

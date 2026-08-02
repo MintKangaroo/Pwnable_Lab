@@ -79,6 +79,22 @@ jump table, exception flow, tail-call 여부는 데이터 흐름 또는 실행 �
 
 Raw bytes에는 loader map과 검증된 entry point가 없으므로 함수/CFG를 추측하지 않는다.
 
+## ROP gadget semantics
+
+ELF x86/x86-64의 file-backed executable section에서 terminal byte를 찾고, 가능한 시작
+offset부터 terminal까지 Capstone으로 정확히 소비되는 sequence만 반환한다.
+
+- 현재 terminal: `ret`, `ret imm16`, `syscall`, `int 0x80`
+- verified: address, bytes, instructions, register access, memory access
+- inferred: quality score, candidate category, chain state
+- stack delta: pop/push/ret 및 immediate RSP add/sub만 계산
+- `leave`, call, RSP move/xchg처럼 데이터 의존적인 변화는 `unknown`
+- PIE는 가장 낮은 `PT_LOAD` 기준 offset을 별도로 반환
+
+가젯이 존재한다는 사실은 ROP이 실제 사용되었거나 exploit이 성공한다는 근거가 아니다.
+체인 모델은 명령을 실행하지 않으며 memory content, branch condition, called code, syscall,
+runtime mapping을 재현하지 않는다.
+
 ## Checksec
 
 각 보호 항목은 다음을 제공한다.

@@ -33,13 +33,13 @@ Dashboard는 실제 API에서 다음을 표시한다.
 - **Functions**: 함수 시작·경계의 verification, confidence, evidence
 - **Disassembly**: entry부터 제한된 수의 Capstone instruction
 - **CFG**: 함수별 basic block, predecessor/successor, direct edge, incoming xref
-- **ROP Gadgets**: 실행 section의 `ret` 종결 gadget과 text filter
+- **ROP Studio**: verified gadget 효과, semantic filter, chain layout, inferred state model
 - **Symbols**: static/dynamic symbol 검색
 - **Strings**: ASCII/UTF-16LE string
 - **GOT / PLT**: 관련 section과 undefined dynamic imports
 - **Hex View**: 512-byte page 기반 file view
 
-PE는 Functions/CFG를 지원하지만 ROP Gadgets와 GOT/PLT 탭은 표시하지 않고
+PE는 Functions/CFG를 지원하지만 ROP Studio와 GOT/PLT 탭은 표시하지 않고
 imports/exports를 Symbols에 표시한다. Raw는 함수 경계를 추측하지 않으므로 Overview,
 Disassembly, Strings, Hex View만 표시한다.
 
@@ -49,6 +49,18 @@ Raw Disassembly에서는 architecture (`x86` 또는 `x86-64`)와 base address를
 탭과 선택 주소는 URL의 path와 `address` query에 반영되므로 새로고침, 뒤로 가기,
 링크 공유가 가능하다. Functions의 `Open CFG`와 CFG block 주소를 이용해 같은 주소 근거를
 유지한 채 화면 사이를 이동할 수 있다.
+
+### ROP Studio
+
+1. instruction substring 또는 제한된 safe regex로 gadget을 검색한다.
+2. changed register, category, stack delta, bad byte, quality 조건을 적용한다.
+3. `+ ADD`로 verified gadget을 chain에 넣고 literal/symbol 값을 배치한다.
+4. drag-and-drop 또는 위/아래 버튼으로 stack layout을 정렬한다.
+5. State Simulation에서 소비된 entry, RSP delta, register 값과 실패 이유를 확인한다.
+
+`LAYOUT VALID`는 제한된 정적 모델 안에서 stack layout이 일관된다는 뜻이다. 바이너리를
+실행하거나 exploit 성공을 검증했다는 의미가 아니며 결과는 `inferred`로 표시된다.
+PIE gadget은 runtime base가 확인되기 전까지 image offset이다.
 
 Context Header에는 파일명, architecture, bit, short SHA, 분석 상태, compact protection
 요약이 표시된다. `Re-run static analysis`는 업로드 파일을 실행하지 않고 metadata

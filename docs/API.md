@@ -55,6 +55,8 @@ GET /api/v1/binaries/{id}/disassembly?architecture=x86_64&base_address=4194304
 | `GET` | `/binaries/{id}/got` | relocation으로 검증된 GOT target |
 | `GET` | `/binaries/{id}/plt` | PLT layout에서 파생한 stub candidate |
 | `GET` | `/binaries/{id}/vulns` | 위험 API와 direct-call 후보 |
+| `GET` | `/binaries/{id}/gadgets` | paginated gadget metadata와 semantic filter |
+| `POST` | `/binaries/{id}/rop/simulate` | 제한된 inferred chain layout model |
 
 PE에서 `imports`, `exports`, `relocations`, `libraries`는 PE 테이블을
 정규화해 반환한다. GOT/PLT와 ROP gadget 스캔은 현재 ELF 전용이며 PE/raw
@@ -71,6 +73,18 @@ memory operand만 정적으로 해석한다.
 
 `symbols`의 `kind`는 `all`, `static`, `dynamic`, `imports`, `exports`, `functions` 중 하나다.
 `offset` 기본값은 0, `limit` 기본값은 200이며 최대 5000이다.
+
+### Gadget filters
+
+`GET /gadgets`는 `q`, `regex`, `register`, `category`, `min_stack_change`,
+`max_stack_change`, `bad_bytes`, `address_min`, `address_max`, `sort`, `order`,
+`offset`, `limit`을 지원한다. regex는 ReDoS 위험을 줄이기 위해 group/brace를 허용하지
+않는 길이 제한 subset이다. bad byte는 `00,0a` 또는 `0x00 0x0a` 형식이다.
+
+가젯 bytes/disassembly/access 정보는 `verified`, quality score는 `inferred`다.
+`POST /rop/simulate`는 최대 256개 gadget/literal/symbol/padding entry를 받아 pop,
+정수 RSP 조정, ret, syscall transition만 모델링한다. `LAYOUT VALID`에 해당하는
+`status=valid`도 runtime 성공을 뜻하지 않으며 `success_verified=false`다.
 
 ## Accuracy fields
 

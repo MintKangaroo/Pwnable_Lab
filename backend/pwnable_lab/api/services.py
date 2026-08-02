@@ -9,7 +9,12 @@ from pwnable_lab.analyzer.checksec import run_checksec
 from pwnable_lab.analyzer.control_flow import ControlFlowAnalyzer
 from pwnable_lab.analyzer.disasm import disassemble
 from pwnable_lab.analyzer.entropy import raw_entropy_windows, shannon_entropy
-from pwnable_lab.analyzer.gadgets import find_gadgets, search_gadgets
+from pwnable_lab.analyzer.gadgets import (
+    GadgetFilter,
+    filter_gadgets,
+    scan_gadgets,
+    simulate_chain,
+)
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
@@ -219,25 +224,69 @@ class AnalysisService:
             )
         ]
 
-    def gadgets(self, data: bytes, query: str | None = None) -> list[dict]:
+    def gadgets(
+        self,
+        data: bytes,
+        *,
+        filters: GadgetFilter,
+        offset: int,
+        limit: int,
+    ) -> dict:
         self._require_format(data, ArtifactFormat.ELF, feature="ROP gadget scan")
         img = parse_elf(data)
-        gadgets = find_gadgets(
+        scan = scan_gadgets(
             img,
             max_gadgets=self.settings.max_gadgets,
             max_depth=self.settings.max_gadget_depth,
         )
-        if query:
-            gadgets = search_gadgets(gadgets, query)
-        return [
+        gadgets = filter_gadgets(
+            scan.gadgets,
+            filters,
+            bits=img.bits,
+            endian=img.endian,
+        )
+        result = _page(
+            [gadget.as_dict() for gadget in gadgets], offset=offset, limit=limit
+        )
+        result.update(
             {
-                "address": g.address,
-                "bytes_hex": g.bytes_hex,
-                "instructions": g.instructions,
-                "text": g.text,
+                "format": "ELF",
+                "bits": img.bits,
+                "status": "partially_completed" if scan.truncated else "completed",
+                "verification": "verified",
+                "quality_verification": "inferred",
+                "position_independent": scan.position_independent,
+                "image_base": scan.image_base,
+                "scanned_gadgets": len(scan.gadgets),
+                "executable_sections": scan.executable_sections,
+                "filters": asdict(filters),
+                "evidence": [
+                    "Every result exactly decodes from file-backed executable ELF bytes",
+                    "Register and memory access metadata comes from Capstone instruction detail",
+                ],
+                "limitations": [
+                    "This increment scans ret, ret-imm, syscall, and int 0x80 terminators",
+                    "Quality scores are ranking heuristics and do not prove runtime usability",
+                ],
             }
-            for g in gadgets
-        ]
+        )
+        return result
+
+    def simulate_rop(self, data: bytes, *, items: list[dict], rsp_mod16: int) -> dict:
+        self._require_format(data, ArtifactFormat.ELF, feature="ROP chain simulation")
+        img = parse_elf(data)
+        scan = scan_gadgets(
+            img,
+            max_gadgets=self.settings.max_gadgets,
+            max_depth=self.settings.max_gadget_depth,
+        )
+        return simulate_chain(
+            scan.gadgets,
+            items,
+            bits=img.bits,
+            position_independent=scan.position_independent,
+            initial_rsp_mod16=rsp_mod16,
+        )
 
     def got_plt(self, data: bytes) -> dict:
         self._require_format(data, ArtifactFormat.ELF, feature="GOT/PLT analysis")

@@ -40,6 +40,10 @@ PwnPilot은 ELF, Windows PE/EXE, raw binary의 구조와 보호 기법, 공격 �
 
 ![PwnPilot Function CFG](docs/screenshots/13-function-cfg.png)
 
+### ROP Studio
+
+![PwnPilot ROP Studio](docs/screenshots/14-rop-studio.png)
+
 ## 5분 빠른 시작
 
 가장 간단한 방법은 Docker Compose입니다. Docker와 Compose v2만 있으면 됩니다.
@@ -67,7 +71,9 @@ docker compose up --build -d
 3. **Overview**에서 포맷 identity, 보호 기법, 근거, confidence, 위험 API 후보를 확인합니다.
 4. **Functions**에서 검증된 시작점과 추론된 경계를 구분하고 **CFG**에서 기본 블록,
    direct branch edge, xref를 확인합니다.
-5. **Disassembly**, **ROP Gadgets**, **Symbols**, **Strings**, **GOT/PLT**, **Hex View**로
+5. ELF에서는 **ROP Studio**에서 검증된 gadget을 필터링하고 정적 stack/register
+   모델로 chain layout을 점검합니다.
+6. **Disassembly**, **Symbols**, **Strings**, **GOT/PLT**, **Hex View**로
    필요한 근거를 더 자세히 탐색합니다.
 
 현재 버전은 업로드한 파일을 **실행하지 않고** 정적 분석만 수행합니다.
@@ -126,6 +132,10 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 - 함수별 명령, basic block, predecessor/successor, conditional edge, call target
 - direct call/jump와 RIP-relative memory reference xref
 - URL의 `address` 상태를 Functions, CFG, Disassembly 사이에서 유지
+- `ret`, `ret imm`, `syscall`, `int 0x80` 종결 gadget의 exact-byte scan
+- stack delta, register read/write, memory side effect, PIE offset, quality metadata
+- safe-regex/register/category/stack/bad-byte/address filter와 pagination
+- drag/reorder chain layout, inferred stack/register model, pwntools `flat` draft
 
 ### 재사용된 정적 분석 기능
 
@@ -136,7 +146,7 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 | Attack surface | 위험 symbol과 direct call 후보; 인자 추정은 inferred로 표시 |
 | Disassembly | Capstone 기반 x86/x86-64 선형 디스어셈블 |
 | Functions / CFG | 근거 기반 함수 경계, 기본 블록, direct edge와 xref |
-| ROP | 실행 section의 짧은 `ret` 가젯 검색 |
+| ROP | exact decode gadget metadata, semantic filter, inferred chain layout model |
 | Strings | ASCII, UTF-16LE |
 | GOT/PLT | verified relocation target과 inferred PLT stub |
 | Hex | 서버 pagination 기반 512-byte page |
@@ -238,7 +248,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/got` | verified GOT targets |
 | `GET` | `/binaries/{binary_id}/plt` | inferred PLT entries |
 | `GET` | `/binaries/{binary_id}/vulns` | 위험 symbol/direct-call 후보 |
-| `GET` | `/binaries/{binary_id}/gadgets` | ROP 가젯 |
+| `GET` | `/binaries/{binary_id}/gadgets` | paginated ROP gadget metadata와 필터 |
+| `POST` | `/binaries/{binary_id}/rop/simulate` | 제한된 정적 chain layout 모델 |
 | `GET` | `/binaries/{binary_id}/strings` | 문자열 |
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
 | `GET` | `/binaries/{binary_id}/hex` | paginated hex |
@@ -356,7 +367,7 @@ Pwnable_Lab/
 ## 로드맵
 
 - Phase 2: ELF 정적 분석과 PE/raw format-aware intake 구현 완료; 데이터 흐름 정밀화 지속
-- Phase 3: 함수/CFG/direct xref 1차 구현 완료; 고급 함수 복구·gadget semantics·ROP Studio 진행
+- Phase 3: 함수/CFG/direct xref와 ROP Studio 1차 구현 완료; 간접 분기·고급 gadget 진행
 - Phase 4: core/GDB log/stack/memory/crash 분석
 - Phase 5: 근거 기반 exploit strategy와 pwntools draft
 - Phase 6A: 비대화형 disposable sandbox

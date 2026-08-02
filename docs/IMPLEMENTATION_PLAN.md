@@ -24,7 +24,7 @@
 - SQLAlchemy 2와 SQLite 기반 바이너리 메타데이터/문제 제출 저장
 - SHA-256 콘텐츠 주소 방식 바이너리 저장 및 중복 제거
 - pyelftools 기반 ELF32/ELF64 정규화 파서
-- Capstone 기반 x86/x86-64 디스어셈블과 간이 ROP 가젯 검색
+- Capstone 기반 x86/x86-64 디스어셈블과 evidence-based ROP gadget metadata
 - checksec, 문자열, GOT/PLT, 위험 심볼 휴리스틱
 - cyclic, packing, overflow payload 도구
 - 결정론적으로 생성되는 교육용 ELF 문제 6종
@@ -248,8 +248,12 @@ Pwnable_Lab/
 - 완료: 함수 detail, basic block CFG, predecessor/successor, direct edge, call target API
 - 완료: direct call/jump 및 RIP-relative memory xref API와 pagination
 - 완료: Functions/CFG/Disassembly 사이 URL address 상태와 Inspector UI
+- 완료: ret/ret-imm/syscall/int80 exact gadget scan과 Capstone access metadata
+- 완료: stack delta, register/memory side effect, PIE offset, inferred quality score
+- 완료: safe regex/register/category/stack/bad-byte filter와 server pagination
+- 완료: 3-panel ROP Studio, drag/reorder chain, inferred state, `flat` draft
 - 진행 예정: indirect branch/jump table, dominator, string/symbol xref, 대형 graph 가상화
-- 진행 예정: Capstone register/stack side effect와 고급 gadget/ROP Studio
+- 진행 예정: standalone indirect call/jump terminal, deeper data-flow, chain goal builder
 
 ### Phase 4 — 크래시와 메모리
 

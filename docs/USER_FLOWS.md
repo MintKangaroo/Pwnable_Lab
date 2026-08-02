@@ -123,6 +123,9 @@ Finding / Technique
 존재하지 않거나 unresolved인 주소는 0과 TODO로 유지한다. 잘못된 chain은 색상뿐 아니라
 alignment, clobber, bad byte, unresolved base 등 구체적인 이유를 표시한다.
 
+현재 구현의 `LAYOUT VALID`는 pop/ret와 정수 stack adjustment를 이용한 제한된 정적
+일관성 검사다. 실제 실행 성공 상태와 분리하며 API도 `success_verified=false`를 반환한다.
+
 ## 9. Packing 분석
 
 ```text

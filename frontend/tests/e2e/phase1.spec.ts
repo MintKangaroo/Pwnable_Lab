@@ -116,7 +116,7 @@ test('upload PE and raw artifacts with format-specific workspace capabilities', 
   await expect(page.getByText('CONTROL FLOW GUARD', { exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Functions' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'CFG' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'ROP Gadgets' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'ROP Studio' })).toHaveCount(0);
   await expect(page.getByRole('tab', { name: 'GOT / PLT' })).toHaveCount(0);
 
   await page.goto('/');
@@ -147,4 +147,49 @@ test('upload PE and raw artifacts with format-specific workspace capabilities', 
   await page.getByRole('tab', { name: 'Disassembly' }).click();
   await expect(page.getByLabel('Raw binary base address')).toBeVisible();
   await expect(page.getByText('LINEAR DISASSEMBLY', { exact: true })).toBeVisible();
+});
+
+test('filter verified gadgets and validate an inferred ROP chain', async ({ page }) => {
+  await page.goto('/');
+  const artifact = await page.request.get('/api/v1/challenges/gadget-hunt/artifact');
+  expect(artifact.ok()).toBeTruthy();
+  await page
+    .locator('input[type="file"]')
+    .first()
+    .setInputFiles({
+      name: 'authorized-gadget-lab.elf',
+      mimeType: 'application/octet-stream',
+      buffer: await artifact.body(),
+    });
+
+  await page.getByRole('tab', { name: 'ROP Studio' }).click();
+  await expect(page.getByText('ROP STUDIO', { exact: true })).toBeVisible();
+  await page.getByLabel('INSTRUCTIONS').fill('pop rdi ; ret');
+  await page.getByRole('button', { name: 'APPLY FILTERS' }).click();
+
+  const popRdi = page
+    .locator('.gadget-result')
+    .filter({ hasText: 'pop rdi ; ret' })
+    .first();
+  await expect(popRdi).toBeVisible();
+  await popRdi.getByRole('button', { name: '+ ADD' }).click();
+  await page.getByLabel('VALUE').fill('0xdeadbeef');
+  await page.getByRole('button', { name: '+ ADD VALUE' }).click();
+  await popRdi.getByRole('button', { name: '+ ADD' }).click();
+  await page.getByLabel('VALUE').fill('0x41414141');
+  await page.getByRole('button', { name: '+ ADD VALUE' }).click();
+  await page.getByLabel('VALUE').fill('0x401234');
+  await page.getByLabel('LABEL / SYMBOL').fill('target');
+  await page.getByRole('button', { name: '+ ADD VALUE' }).click();
+
+  await expect(page.getByText('LAYOUT VALID', { exact: true })).toBeVisible();
+  await expect(page.locator('.rop-registers')).toContainText('RDI');
+  await expect(page.locator('.rop-registers')).toContainText('0x41414141');
+  await expect(page.getByText('PWntools FLAT DRAFT')).toBeVisible();
+  if (process.env.PWNPILOT_CAPTURE_DOCS === '1') {
+    await page.screenshot({
+      path: '../docs/screenshots/14-rop-studio.png',
+      fullPage: true,
+    });
+  }
 });

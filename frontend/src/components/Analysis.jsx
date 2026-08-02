@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, formatBytes, formatHex } from '../api';
 import {
   Badge,
+  CopyButton,
   DataTable,
   Empty,
   ErrorBanner,
@@ -25,7 +26,7 @@ const tabsForFormat = (format) => {
       ['functions', 'Functions'],
       COMMON_TABS[1],
       ['cfg', 'CFG'],
-      ['gadgets', 'ROP Gadgets'],
+      ['gadgets', 'ROP Studio'],
       COMMON_TABS[2],
       COMMON_TABS[3],
       ['got', 'GOT / PLT'],
@@ -822,82 +823,524 @@ function Disassembly({ sha, info, selectedAddress, onAddressChange }) {
   );
 }
 
-function Gadgets({ sha }) {
-  const [query, setQuery] = useState('');
-  const [gadgets, setGadgets] = useState(null);
-  const [error, setError] = useState('');
+const gadgetCategories = [
+  ['', 'All categories'],
+  ['pop', 'Pop register'],
+  ['multi_pop', 'Multi-pop'],
+  ['return', 'Return'],
+  ['stack_adjust', 'Stack adjust'],
+  ['stack_pivot', 'Stack pivot'],
+  ['syscall', 'Syscall'],
+  ['int80', 'int 0x80'],
+  ['memory_write', 'Memory write'],
+  ['write_what_where_candidate', 'Write-what-where candidate'],
+];
 
-  const search = () => {
-    setGadgets(null);
+const newChainId = () =>
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
+function chainValue(value) {
+  try {
+    return `0x${BigInt(value).toString(16)}`;
+  } catch {
+    return String(value);
+  }
+}
+
+function Gadgets({ sha, onAddressChange }) {
+  const [filters, setFilters] = useState({
+    q: '',
+    regex: false,
+    register: '',
+    category: '',
+    minStackChange: '',
+    maxStackChange: '',
+    badBytes: '',
+    sort: 'quality',
+    order: 'desc',
+  });
+  const [appliedFilters, setAppliedFilters] = useState(filters);
+  const [offset, setOffset] = useState(0);
+  const [catalog, setCatalog] = useState(null);
+  const [chain, setChain] = useState([]);
+  const [literal, setLiteral] = useState('0x0');
+  const [literalLabel, setLiteralLabel] = useState('');
+  const [draggedId, setDraggedId] = useState('');
+  const [simulation, setSimulation] = useState(null);
+  const [simulationLoading, setSimulationLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [chainError, setChainError] = useState('');
+
+  useEffect(() => {
+    setCatalog(null);
     setError('');
     api
-      .gadgets(sha, query)
-      .then(setGadgets)
+      .gadgets(sha, { ...appliedFilters, offset, limit: 100 })
+      .then(setCatalog)
       .catch((reason) => setError(reason.message));
-  };
-  useEffect(() => {
-    api
-      .gadgets(sha)
-      .then(setGadgets)
-      .catch((reason) => setError(reason.message));
-  }, [sha]);
+  }, [sha, appliedFilters, offset]);
 
-  if (error) return <ErrorBanner message={error} />;
+  useEffect(() => {
+    if (!chain.length) {
+      setSimulation(null);
+      setSimulationLoading(false);
+      return;
+    }
+    setSimulationLoading(true);
+    const timer = window.setTimeout(() => {
+      api
+        .simulateRop(
+          sha,
+          chain.map((item) => ({
+            kind: item.kind,
+            value: item.value,
+            label: item.label,
+          })),
+        )
+        .then(setSimulation)
+        .catch((reason) =>
+          setSimulation({
+            status: 'invalid',
+            verification: 'inferred',
+            confidence: 0,
+            errors: [reason.message],
+            warnings: [],
+            registers: {},
+            trace: [],
+            limitations: [],
+          }),
+        )
+        .finally(() => setSimulationLoading(false));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [sha, chain]);
+
+  const addGadget = (gadget) => {
+    setChain((current) => [
+      ...current,
+      {
+        id: newChainId(),
+        kind: 'gadget',
+        value: gadget.address,
+        label: gadget.text,
+        gadget,
+      },
+    ]);
+  };
+
+  const addLiteral = (event) => {
+    event.preventDefault();
+    try {
+      const parsed = BigInt(literal.trim());
+      if (parsed < 0n || parsed > 0xffffffffffffffffn) throw new RangeError();
+      setChain((current) => [
+        ...current,
+        {
+          id: newChainId(),
+          kind: literalLabel.trim() ? 'symbol' : 'literal',
+          value: literal.trim(),
+          label: literalLabel.trim() || 'literal',
+        },
+      ]);
+      setChainError('');
+    } catch {
+      setChainError('값은 unsigned 64-bit 정수 또는 0x 접두 주소여야 합니다.');
+    }
+  };
+
+  const moveChainItem = (from, to) => {
+    if (to < 0 || to >= chain.length || from === to) return;
+    setChain((current) => {
+      const next = [...current];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  };
+
+  const pwntoolsDraft = useMemo(() => {
+    if (!chain.length) return '';
+    return [
+      '# Verified gadget values; runtime bases and literals still require validation.',
+      'chain = flat(',
+      ...chain.map(
+        (item) => `    ${chainValue(item.value)},  # ${item.label || item.kind}`,
+      ),
+      ')',
+    ].join('\n');
+  }, [chain]);
+
   return (
-    <section>
-      <div className="toolbar">
+    <section className="rop-studio">
+      <div className="toolbar rop-toolbar">
         <div>
-          <strong>ROP GADGET FINDER</strong>
-          <span>ret 종결 명령 시퀀스</span>
+          <strong>ROP STUDIO</strong>
+          <span>
+            Verified bytes and effects · inferred quality and chain state · static only
+          </span>
         </div>
-        <form
-          className="search-box"
-          onSubmit={(event) => {
-            event.preventDefault();
-            search();
-          }}
-        >
-          <Icon name="search" size={16} />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="pop rdi ; ret"
-          />
-          <button type="submit">SEARCH</button>
-        </form>
+        {catalog && (
+          <div className="rop-scan-status">
+            <Badge tone={catalog.status === 'completed' ? 'green' : 'warn'}>
+              {catalog.status.replace('_', ' ')}
+            </Badge>
+            <span>{catalog.scanned_gadgets} scanned</span>
+            {catalog.position_independent && <Badge tone="warn">PIE OFFSETS</Badge>}
+          </div>
+        )}
       </div>
-      {!gadgets ? (
-        <Loading label="실행 섹션에서 가젯을 찾는 중" />
-      ) : (
-        <DataTable
-          rows={gadgets}
-          keyFor={(row) => `${row.address}-${row.bytes_hex}`}
-          empty="검색 조건과 일치하는 가젯이 없습니다."
-          columns={[
-            {
-              key: 'address',
-              label: 'ADDRESS',
-              render: (row) => (
-                <code className="address">{formatHex(row.address)}</code>
-              ),
-            },
-            {
-              key: 'bytes_hex',
-              label: 'BYTES',
-              render: (row) => (
-                <code className="dim-code">
-                  {row.bytes_hex.match(/.{1,2}/g)?.join(' ')}
-                </code>
-              ),
-            },
-            {
-              key: 'text',
-              label: 'INSTRUCTIONS',
-              render: (row) => <code className="gadget-code">{row.text}</code>,
-            },
-          ]}
-        />
-      )}
+      <ErrorBanner message={error} />
+      <div className="rop-columns">
+        <section className="gadget-search-panel" aria-label="Gadget search">
+          <div className="panel-title">
+            <span>01</span>
+            <strong>GADGET SEARCH</strong>
+          </div>
+          <form
+            className="gadget-filter-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setOffset(0);
+              setAppliedFilters({ ...filters });
+            }}
+          >
+            <label className="filter-wide">
+              INSTRUCTIONS
+              <input
+                value={filters.q}
+                onChange={(event) => setFilters({ ...filters, q: event.target.value })}
+                placeholder="pop rdi ; ret"
+              />
+            </label>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={filters.regex}
+                onChange={(event) =>
+                  setFilters({ ...filters, regex: event.target.checked })
+                }
+              />
+              Safe regex
+            </label>
+            <label>
+              WRITES REGISTER
+              <input
+                value={filters.register}
+                onChange={(event) =>
+                  setFilters({ ...filters, register: event.target.value })
+                }
+                placeholder="rdi"
+              />
+            </label>
+            <label>
+              CATEGORY
+              <select
+                value={filters.category}
+                onChange={(event) =>
+                  setFilters({ ...filters, category: event.target.value })
+                }
+              >
+                {gadgetCategories.map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              MIN STACK Δ
+              <input
+                type="number"
+                value={filters.minStackChange}
+                onChange={(event) =>
+                  setFilters({ ...filters, minStackChange: event.target.value })
+                }
+                placeholder="0"
+              />
+            </label>
+            <label>
+              MAX STACK Δ
+              <input
+                type="number"
+                value={filters.maxStackChange}
+                onChange={(event) =>
+                  setFilters({ ...filters, maxStackChange: event.target.value })
+                }
+                placeholder="64"
+              />
+            </label>
+            <label>
+              BAD BYTES
+              <input
+                value={filters.badBytes}
+                onChange={(event) =>
+                  setFilters({ ...filters, badBytes: event.target.value })
+                }
+                placeholder="00, 0a"
+              />
+            </label>
+            <label>
+              SORT
+              <select
+                value={filters.sort}
+                onChange={(event) =>
+                  setFilters({ ...filters, sort: event.target.value })
+                }
+              >
+                <option value="quality">Quality</option>
+                <option value="side_effects">Side effects</option>
+                <option value="stack_change">Stack delta</option>
+                <option value="address">Address</option>
+              </select>
+            </label>
+            <button className="filter-submit" type="submit">
+              <Icon name="search" size={14} /> APPLY FILTERS
+            </button>
+          </form>
+
+          {!catalog ? (
+            !error && <Loading label="가젯 효과를 분석하는 중" />
+          ) : !catalog.items.length ? (
+            <Empty
+              title="No matching gadgets"
+              description="필터를 완화하거나 bad byte 조건을 확인하세요."
+            />
+          ) : (
+            <div className="gadget-result-list">
+              {catalog.items.map((gadget) => (
+                <article className="gadget-result" key={gadget.address}>
+                  <header>
+                    <button
+                      className="gadget-address"
+                      onClick={() => onAddressChange(gadget.address, 'disassembly')}
+                    >
+                      {formatHex(gadget.address)}
+                    </button>
+                    <span className="gadget-quality">
+                      ≈ {Math.round(gadget.quality_score * 100)}
+                    </span>
+                    <button className="gadget-add" onClick={() => addGadget(gadget)}>
+                      + ADD
+                    </button>
+                  </header>
+                  <code>{gadget.text}</code>
+                  <footer>
+                    <span>STACK {gadget.stack_change ?? '?'}</span>
+                    <span>WRITE {gadget.registers_written.join(', ') || 'none'}</span>
+                    <span>SIDE FX {gadget.side_effect_count}</span>
+                  </footer>
+                </article>
+              ))}
+            </div>
+          )}
+          {catalog && catalog.total > catalog.limit && (
+            <div className="rop-pagination">
+              <button
+                disabled={offset === 0}
+                onClick={() => setOffset(Math.max(0, offset - catalog.limit))}
+              >
+                ← Previous
+              </button>
+              <span>
+                {offset + 1}–{Math.min(offset + catalog.limit, catalog.total)} of{' '}
+                {catalog.total}
+              </span>
+              <button
+                disabled={offset + catalog.limit >= catalog.total}
+                onClick={() => setOffset(offset + catalog.limit)}
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </section>
+
+        <section className="rop-chain-panel" aria-label="ROP chain">
+          <div className="panel-title">
+            <span>02</span>
+            <strong>CHAIN LAYOUT</strong>
+            <button disabled={!chain.length} onClick={() => setChain([])}>
+              CLEAR
+            </button>
+          </div>
+          {!chain.length ? (
+            <Empty
+              title="Chain is empty"
+              description="검증된 gadget을 추가한 다음 필요한 literal 또는 symbol 주소를 배치하세요."
+            />
+          ) : (
+            <div className="chain-list">
+              {chain.map((item, index) => (
+                <article
+                  draggable
+                  className={`chain-entry chain-${item.kind}`}
+                  key={item.id}
+                  onDragStart={() => setDraggedId(item.id)}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={() => {
+                    const from = chain.findIndex((entry) => entry.id === draggedId);
+                    if (from >= 0) moveChainItem(from, index);
+                    setDraggedId('');
+                  }}
+                >
+                  <span className="chain-offset">
+                    +{index * ((catalog?.bits || 64) / 8)}
+                  </span>
+                  <span className="chain-grip" aria-hidden="true">
+                    ⋮⋮
+                  </span>
+                  <div>
+                    <strong>{item.kind.toUpperCase()}</strong>
+                    <code>{chainValue(item.value)}</code>
+                    <small>{item.label}</small>
+                  </div>
+                  <div className="chain-actions">
+                    <button
+                      aria-label="Move entry up"
+                      disabled={index === 0}
+                      onClick={() => moveChainItem(index, index - 1)}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      aria-label="Move entry down"
+                      disabled={index === chain.length - 1}
+                      onClick={() => moveChainItem(index, index + 1)}
+                    >
+                      ↓
+                    </button>
+                    <button
+                      aria-label="Remove entry"
+                      onClick={() =>
+                        setChain((current) =>
+                          current.filter((entry) => entry.id !== item.id),
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+          <form className="literal-form" onSubmit={addLiteral}>
+            <label>
+              VALUE
+              <input
+                className="mono-input"
+                value={literal}
+                onChange={(event) => setLiteral(event.target.value)}
+              />
+            </label>
+            <label>
+              LABEL / SYMBOL
+              <input
+                value={literalLabel}
+                onChange={(event) => setLiteralLabel(event.target.value)}
+                placeholder="puts@got or argument"
+              />
+            </label>
+            <button type="submit">+ ADD VALUE</button>
+          </form>
+          <ErrorBanner message={chainError} onClose={() => setChainError('')} />
+          {pwntoolsDraft && (
+            <div className="rop-code-draft">
+              <div>
+                <strong>PWntools FLAT DRAFT</strong>
+                <CopyButton value={pwntoolsDraft} label="COPY" />
+              </div>
+              <pre>{pwntoolsDraft}</pre>
+            </div>
+          )}
+        </section>
+
+        <aside className="rop-state-panel" aria-label="ROP state simulation">
+          <div className="panel-title">
+            <span>03</span>
+            <strong>STATE SIMULATION</strong>
+          </div>
+          {!chain.length ? (
+            <Empty
+              title="No state to simulate"
+              description="체인 항목을 추가하면 서버가 스택 소비와 레지스터 변화를 정적으로 추론합니다."
+            />
+          ) : simulationLoading ? (
+            <Loading label="체인 stack effect를 추론하는 중" />
+          ) : simulation ? (
+            <>
+              <div className="simulation-status">
+                <Badge
+                  tone={
+                    simulation.status === 'valid'
+                      ? 'green'
+                      : simulation.status === 'invalid'
+                        ? 'danger'
+                        : 'warn'
+                  }
+                >
+                  {simulation.status === 'valid'
+                    ? 'LAYOUT VALID'
+                    : simulation.status.toUpperCase()}
+                </Badge>
+                <span>≈ INFERRED · {Math.round(simulation.confidence * 100)}%</span>
+              </div>
+              <p className="simulation-meaning">{simulation.meaning}</p>
+              <div className="simulation-metrics">
+                <div>
+                  <span>RSP DELTA</span>
+                  <strong>{simulation.rsp_delta ?? '—'} bytes</strong>
+                </div>
+                <div>
+                  <span>FINAL RSP MOD 16</span>
+                  <strong>{simulation.final_rsp_mod16 ?? '—'}</strong>
+                </div>
+                <div>
+                  <span>CONSUMED</span>
+                  <strong>
+                    {simulation.consumed_entries ?? 0}/{simulation.entry_count ?? 0}
+                  </strong>
+                </div>
+              </div>
+              <h3>Register state</h3>
+              <div className="rop-registers">
+                {Object.entries(simulation.registers || {}).map(([name, value]) => (
+                  <div key={name}>
+                    <code>{name.toUpperCase()}</code>
+                    <code>{value.value_hex || 'unknown'}</code>
+                    <span>{value.verification}</span>
+                  </div>
+                ))}
+                {!Object.keys(simulation.registers || {}).length && (
+                  <p>No modelled register changes.</p>
+                )}
+              </div>
+              {!!simulation.errors?.length && (
+                <div className="simulation-messages danger">
+                  <strong>BLOCKING ERRORS</strong>
+                  {simulation.errors.map((item) => (
+                    <p key={item}>× {item}</p>
+                  ))}
+                </div>
+              )}
+              {!!simulation.warnings?.length && (
+                <div className="simulation-messages warning">
+                  <strong>WARNINGS</strong>
+                  {simulation.warnings.map((item) => (
+                    <p key={item}>◇ {item}</p>
+                  ))}
+                </div>
+              )}
+              <div className="simulation-messages neutral">
+                <strong>MODEL LIMITS</strong>
+                {(simulation.limitations || []).map((item) => (
+                  <p key={item}>? {item}</p>
+                ))}
+              </div>
+            </>
+          ) : null}
+        </aside>
+      </div>
     </section>
   );
 }
@@ -1391,7 +1834,7 @@ export function Analysis({
               onAddressChange={onAddressChange}
             />
           )}
-          {tab === 'gadgets' && <Gadgets sha={sha} />}
+          {tab === 'gadgets' && <Gadgets sha={sha} onAddressChange={onAddressChange} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}
           {tab === 'got' && <GotPlt sha={sha} />}

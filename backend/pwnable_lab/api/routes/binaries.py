@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
+from pwnable_lab.analyzer.gadgets import GadgetFilter
 from pwnable_lab.api.dependencies import (
     get_analysis_queue,
     get_config,
@@ -17,6 +19,7 @@ from pwnable_lab.api.schemas import (
     AnalysisJobResponse,
     BinaryDetail,
     BinarySummary,
+    RopSimulationRequest,
     UploadResponse,
 )
 from pwnable_lab.api.services import AnalysisService
@@ -207,11 +210,60 @@ def binary_vulns(
 @router.get("/{sha256}/gadgets")
 def binary_gadgets(
     sha256: str,
-    q: str | None = Query(default=None),
+    q: str = Query(default="", max_length=128),
+    regex: bool = Query(default=False),
+    register: str | None = Query(default=None, max_length=16),
+    category: str | None = Query(default=None, max_length=64),
+    min_stack_change: int | None = Query(default=None, ge=-1_048_576, le=1_048_576),
+    max_stack_change: int | None = Query(default=None, ge=-1_048_576, le=1_048_576),
+    bad_bytes: str = Query(default="", max_length=128),
+    address_min: str | None = Query(default=None, max_length=32),
+    address_max: str | None = Query(default=None, max_length=32),
+    sort: Literal["address", "quality", "side_effects", "stack_change"] = Query(
+        default="quality"
+    ),
+    order: Literal["asc", "desc"] = Query(default="desc"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=500),
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
-) -> list[dict]:
-    return service.gadgets(repo.load_bytes(sha256), query=q)
+) -> dict:
+    if (
+        min_stack_change is not None
+        and max_stack_change is not None
+        and min_stack_change > max_stack_change
+    ):
+        raise AnalysisError("min_stack_change cannot exceed max_stack_change.")
+    filters = GadgetFilter(
+        query=q,
+        regex=regex,
+        register=register,
+        category=category,
+        min_stack_change=min_stack_change,
+        max_stack_change=max_stack_change,
+        bad_bytes=_parse_bad_bytes(bad_bytes),
+        address_min=_parse_address(address_min) if address_min else None,
+        address_max=_parse_address(address_max) if address_max else None,
+        sort=sort,
+        order=order,
+    )
+    return service.gadgets(
+        repo.load_bytes(sha256), filters=filters, offset=offset, limit=limit
+    )
+
+
+@router.post("/{sha256}/rop/simulate")
+def binary_rop_simulate(
+    sha256: str,
+    request: RopSimulationRequest,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.simulate_rop(
+        repo.load_bytes(sha256),
+        items=[item.model_dump() for item in request.items],
+        rsp_mod16=request.initial_rsp_mod16,
+    )
 
 
 @router.get("/{sha256}/symbols")
@@ -411,3 +463,18 @@ def _parse_address(value: str) -> int:
     if not 0 <= address <= 0xFFFFFFFFFFFFFFFF:
         raise AnalysisError("Address must be an unsigned 64-bit integer.")
     return address
+
+
+def _parse_bad_bytes(value: str) -> tuple[int, ...]:
+    if not value.strip():
+        return ()
+    pieces = [piece for piece in re.split(r"[\s,]+", value.strip()) if piece]
+    if len(pieces) > 32:
+        raise AnalysisError("At most 32 bad-byte values may be supplied.")
+    output: set[int] = set()
+    for piece in pieces:
+        normalized = piece[2:] if piece.lower().startswith("0x") else piece
+        if not re.fullmatch(r"[0-9a-fA-F]{2}", normalized):
+            raise AnalysisError(f"Invalid bad byte: {piece}")
+        output.add(int(normalized, 16))
+    return tuple(sorted(output))

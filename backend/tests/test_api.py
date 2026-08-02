@@ -138,18 +138,22 @@ def test_all_binary_analysis_endpoints(client):
     }
     assert all(response.status_code == 200 for response in responses.values())
     assert any(item["symbol"] == "gets" for item in responses["vulns"].json())
-    assert any("pop rdi" in item["text"] for item in responses["gadgets"].json())
+    assert any(
+        "pop rdi" in item["text"] for item in responses["gadgets"].json()["items"]
+    )
     assert responses["disassembly?count=8"].json()
     assert responses["hex?page=0"].json()["rows"]
 
 
 def test_gadget_query_filters(client):
     sha = _upload(client).json()["sha256"]
-    items = client.get(
+    response = client.get(
         f"/api/binaries/{sha}/gadgets", params={"q": "pop rdi ; ret"}
     ).json()
+    items = response["items"]
     assert items
     assert all("pop rdi ; ret" in item["text"] for item in items)
+    assert response["quality_verification"] == "inferred"
 
 
 def test_invalid_or_missing_binary_is_404(client):

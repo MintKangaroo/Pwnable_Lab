@@ -106,6 +106,51 @@ export interface FunctionPage {
   evidence: string[];
 }
 
+export interface GadgetInfo {
+  address: number;
+  bytes_hex: string;
+  instructions: string[];
+  text: string;
+  section: string;
+  terminator: string;
+  stack_change: number | null;
+  stack_words: number | null;
+  registers_read: string[];
+  registers_written: string[];
+  popped_registers: string[];
+  memory_read: boolean;
+  memory_write: boolean;
+  categories: string[];
+  side_effect_count: number;
+  quality_score: number;
+  pie_offset: number | null;
+  position_independent: boolean;
+  bad_bytes: string[];
+  verification: 'verified';
+  confidence: number;
+  evidence: string[];
+}
+
+export interface GadgetPage {
+  items: GadgetInfo[];
+  total: number;
+  offset: number;
+  limit: number;
+  bits: 32 | 64;
+  status: 'completed' | 'partially_completed';
+  verification: 'verified';
+  quality_verification: 'inferred';
+  position_independent: boolean;
+  scanned_gadgets: number;
+  limitations: string[];
+}
+
+export interface RopChainItem {
+  kind: 'gadget' | 'literal' | 'symbol' | 'padding';
+  value: number | string;
+  label?: string;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${BASE}${path}`, options);
   if (!response.ok) {
@@ -149,10 +194,46 @@ export const api = {
   info: (sha: string) => request<Record<string, unknown>>(`/binaries/${sha}/info`),
   checksec: (sha: string) => request<ChecksecResult>(`/binaries/${sha}/checksec`),
   vulns: (sha: string) => request<VulnerabilityFinding[]>(`/binaries/${sha}/vulns`),
-  gadgets: (sha: string, query = '') =>
-    request<unknown[]>(
-      `/binaries/${sha}/gadgets${query ? `?q=${encodeURIComponent(query)}` : ''}`,
-    ),
+  gadgets: (
+    sha: string,
+    filters: {
+      q?: string;
+      regex?: boolean;
+      register?: string;
+      category?: string;
+      minStackChange?: string;
+      maxStackChange?: string;
+      badBytes?: string;
+      sort?: 'address' | 'quality' | 'side_effects' | 'stack_change';
+      order?: 'asc' | 'desc';
+      offset?: number;
+      limit?: number;
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (filters.q) params.set('q', filters.q);
+    if (filters.regex) params.set('regex', 'true');
+    if (filters.register) params.set('register', filters.register);
+    if (filters.category) params.set('category', filters.category);
+    if (filters.minStackChange) {
+      params.set('min_stack_change', filters.minStackChange);
+    }
+    if (filters.maxStackChange) {
+      params.set('max_stack_change', filters.maxStackChange);
+    }
+    if (filters.badBytes) params.set('bad_bytes', filters.badBytes);
+    if (filters.sort) params.set('sort', filters.sort);
+    if (filters.order) params.set('order', filters.order);
+    params.set('offset', String(filters.offset || 0));
+    params.set('limit', String(filters.limit || 100));
+    return request<GadgetPage>(`/binaries/${sha}/gadgets?${params}`);
+  },
+  simulateRop: (sha: string, items: RopChainItem[], initialRspMod16 = 0) =>
+    request<Record<string, unknown>>(`/binaries/${sha}/rop/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items, initial_rsp_mod16: initialRspMod16 }),
+    }),
   got: (sha: string) => request<Record<string, unknown>>(`/binaries/${sha}/got`),
   functions: (sha: string, query = '') =>
     request<FunctionPage>(
