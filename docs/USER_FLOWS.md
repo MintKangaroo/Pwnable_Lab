@@ -47,7 +47,21 @@ Analysis Queue: Failed
 Phase 1은 최신 작업 상태만 제공한다. 전체 job history, 단계별 progress, cancellation은
 worker가 도입되는 Phase에서 추가한다.
 
-## 4. Finding에서 근거로 이동
+## 4. 함수에서 CFG와 디스어셈블리로 이동
+
+```text
+Functions
+  → verified start / inferred boundary 확인
+  → select function (URL address 유지)
+  → CFG basic blocks + direct edges
+  → incoming xref 선택 또는 block address 선택
+  → Disassembly at exact address
+```
+
+Raw binary에는 이 흐름을 제공하지 않는다. ELF/PE에서도 indirect branch target은
+정적으로 확인되지 않으면 edge나 함수 주소를 만들지 않는다.
+
+## 5. Finding에서 근거로 이동
 
 ```text
 Finding row
@@ -62,7 +76,7 @@ ELF direct-call은 확인된 call address와 제한적 인자 추정을 제공�
 IAT address를 검증하지만 call-site data flow를 복원하지 않았으므로 `possible/inferred`로
 표시하며 가짜 call address를 만들지 않는다.
 
-## 5. 크래시에서 익스플로잇 전략으로 이동
+## 6. 크래시에서 익스플로잇 전략으로 이동
 
 ```text
 Upload core/log
@@ -77,7 +91,7 @@ Upload core/log
 
 정적 추론과 런타임 확인 결과를 합칠 때 provenance를 잃지 않는다.
 
-## 6. Interactive Debugging
+## 7. Interactive Debugging
 
 ```text
 Create Session
@@ -94,7 +108,7 @@ Create Session
 동시에 하나의 실행 명령만 허용한다. 메모리/레지스터 수정은 old/new 값을 보여 준 뒤
 확인하며 audit event를 남긴다.
 
-## 7. ROP Chain 작성
+## 8. ROP Chain 작성
 
 ```text
 Finding / Technique
@@ -109,7 +123,7 @@ Finding / Technique
 존재하지 않거나 unresolved인 주소는 0과 TODO로 유지한다. 잘못된 chain은 색상뿐 아니라
 alignment, clobber, bad byte, unresolved base 등 구체적인 이유를 표시한다.
 
-## 8. Packing 분석
+## 9. Packing 분석
 
 ```text
 Packing: likely
@@ -122,7 +136,7 @@ Packing: likely
 
 원본, unpacked, reconstructed artifact의 상태를 구분하고 원본을 덮어쓰지 않는다.
 
-## 9. 키보드 흐름
+## 10. 키보드 흐름
 
 - `Ctrl/Cmd + K`: command palette
 - `G`: Workspace에서 주소 이동

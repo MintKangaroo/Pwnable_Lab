@@ -240,6 +240,17 @@ Pwnable_Lab/
 - 가젯 필터, PIE offset, bad byte, 품질 점수
 - React Flow 또는 Cytoscape 기반 CFG/ROP Studio
 
+1차 구현 상태(2026-08-02):
+
+- 완료: ELF/PE x86·x86-64 executable region 공통 adapter
+- 완료: symbol/export/entry의 verified start와 direct-call inferred start 분리
+- 완료: symbol size 기반 verified boundary와 neighbour/region 기반 inferred boundary
+- 완료: 함수 detail, basic block CFG, predecessor/successor, direct edge, call target API
+- 완료: direct call/jump 및 RIP-relative memory xref API와 pagination
+- 완료: Functions/CFG/Disassembly 사이 URL address 상태와 Inspector UI
+- 진행 예정: indirect branch/jump table, dominator, string/symbol xref, 대형 graph 가상화
+- 진행 예정: Capstone register/stack side effect와 고급 gadget/ROP Studio
+
 ### Phase 4 — 크래시와 메모리
 
 - ELF core note, GDB/pwndbg/gef 텍스트 파서

@@ -22,7 +22,9 @@ const tabsForFormat = (format) => {
   if (format === 'ELF') {
     return [
       COMMON_TABS[0],
+      ['functions', 'Functions'],
       COMMON_TABS[1],
+      ['cfg', 'CFG'],
       ['gadgets', 'ROP Gadgets'],
       COMMON_TABS[2],
       COMMON_TABS[3],
@@ -33,7 +35,15 @@ const tabsForFormat = (format) => {
   if (format === 'RAW') {
     return [COMMON_TABS[0], COMMON_TABS[1], COMMON_TABS[3], COMMON_TABS[4]];
   }
-  return COMMON_TABS;
+  return [
+    COMMON_TABS[0],
+    ['functions', 'Functions'],
+    COMMON_TABS[1],
+    ['cfg', 'CFG'],
+    COMMON_TABS[2],
+    COMMON_TABS[3],
+    COMMON_TABS[4],
+  ];
 };
 
 const severityTone = {
@@ -328,12 +338,348 @@ function Overview({ sha, info }) {
   );
 }
 
-function Disassembly({ sha, info }) {
+const addressParam = (value) =>
+  typeof value === 'number' ? `0x${value.toString(16)}` : String(value || '');
+
+function FunctionsView({ sha, selectedAddress, onAddressChange }) {
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [catalog, setCatalog] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query), 250);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    setCatalog(null);
+    setError('');
+    api
+      .functions(sha, debouncedQuery)
+      .then(setCatalog)
+      .catch((reason) => setError(reason.message));
+  }, [sha, debouncedQuery]);
+
+  const activeAddress = selectedAddress || catalog?.items?.[0]?.address || '';
+  useEffect(() => {
+    if (!activeAddress) {
+      setDetail(null);
+      return;
+    }
+    setDetail(null);
+    api
+      .functionDetail(sha, activeAddress)
+      .then(setDetail)
+      .catch((reason) => setError(reason.message));
+  }, [sha, activeAddress]);
+
+  return (
+    <div className="function-workspace">
+      <section className="function-list-panel">
+        <div className="toolbar">
+          <div>
+            <strong>FUNCTION INDEX</strong>
+            <span>
+              {catalog ? `${catalog.total} starts` : 'Recovering function starts'} ·
+              boundaries preserve verification state
+            </span>
+          </div>
+          <div className="search-box">
+            <Icon name="search" size={16} />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="main, helper, 0x401000…"
+              aria-label="Search functions"
+            />
+          </div>
+        </div>
+        <ErrorBanner message={error} />
+        {!catalog ? (
+          !error && <Loading label="함수 시작점과 경계를 복구하는 중" />
+        ) : (
+          <DataTable
+            rows={catalog.items}
+            empty="조건에 맞는 함수 시작점이 없습니다."
+            keyFor={(row) => row.address}
+            columns={[
+              {
+                key: 'name',
+                label: 'FUNCTION',
+                render: (row) => (
+                  <button
+                    className={`table-link ${addressParam(activeAddress) === addressParam(row.address) ? 'selected' : ''}`}
+                    onClick={() => onAddressChange(row.address, 'functions')}
+                  >
+                    {row.name}
+                  </button>
+                ),
+              },
+              {
+                key: 'address',
+                label: 'START',
+                render: (row) => (
+                  <code className="address">{formatHex(row.address)}</code>
+                ),
+              },
+              {
+                key: 'end',
+                label: 'END',
+                render: (row) => <code>{formatHex(row.end)}</code>,
+              },
+              { key: 'size', label: 'SIZE' },
+              { key: 'region', label: 'REGION' },
+              {
+                key: 'verification',
+                label: 'BOUNDARY',
+                render: (row) => (
+                  <span
+                    className={`verification verification-${row.boundary_verification}`}
+                  >
+                    {verificationSymbols[row.boundary_verification]}{' '}
+                    {row.boundary_verification}
+                  </span>
+                ),
+              },
+              {
+                key: 'cfg',
+                label: '',
+                render: (row) => (
+                  <button
+                    className="row-context-action"
+                    onClick={() => onAddressChange(row.address, 'cfg')}
+                  >
+                    Open CFG →
+                  </button>
+                ),
+              },
+            ]}
+          />
+        )}
+      </section>
+
+      <aside className="function-inspector">
+        <div className="inspector-heading">
+          <span>FUNCTION INSPECTOR</span>
+          {detail && (
+            <span className={`verification verification-${detail.verification}`}>
+              {verificationSymbols[detail.verification]} {detail.verification}
+            </span>
+          )}
+        </div>
+        {!activeAddress ? (
+          <Empty
+            title="No function selected"
+            description="함수를 선택하면 경계 근거와 명령 요약을 표시합니다."
+          />
+        ) : !detail ? (
+          !error && <Loading label="함수 근거를 불러오는 중" />
+        ) : (
+          <>
+            <h3>{detail.name}</h3>
+            <code className="inspector-address">
+              {formatHex(detail.address)}–{formatHex(detail.end)}
+            </code>
+            <dl className="inspector-facts">
+              <div>
+                <dt>SOURCE</dt>
+                <dd>{detail.source}</dd>
+              </div>
+              <div>
+                <dt>REGION</dt>
+                <dd>{detail.region}</dd>
+              </div>
+              <div>
+                <dt>INSTRUCTIONS</dt>
+                <dd>{detail.instruction_count}</dd>
+              </div>
+              <div>
+                <dt>CONFIDENCE</dt>
+                <dd>{Math.round(detail.confidence * 100)}%</dd>
+              </div>
+            </dl>
+            <div className="inspector-actions">
+              <button onClick={() => onAddressChange(detail.address, 'disassembly')}>
+                Open disassembly
+              </button>
+              <button onClick={() => onAddressChange(detail.address, 'cfg')}>
+                Open CFG
+              </button>
+            </div>
+            <div className="evidence-compact">
+              <strong>EVIDENCE</strong>
+              {detail.evidence.map((item) => (
+                <p key={item}>✓ {item}</p>
+              ))}
+            </div>
+          </>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function CFGView({ sha, selectedAddress, onAddressChange }) {
+  const [catalog, setCatalog] = useState(null);
+  const [report, setReport] = useState(null);
+  const [xrefs, setXrefs] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api
+      .functions(sha)
+      .then(setCatalog)
+      .catch((reason) => setError(reason.message));
+  }, [sha]);
+
+  const activeAddress = selectedAddress || catalog?.items?.[0]?.address || '';
+  useEffect(() => {
+    if (!activeAddress) return;
+    setReport(null);
+    setXrefs(null);
+    setError('');
+    Promise.all([
+      api.cfg(sha, activeAddress),
+      api.xrefs(sha, { address: activeAddress, direction: 'to' }),
+    ])
+      .then(([nextReport, nextXrefs]) => {
+        setReport(nextReport);
+        setXrefs(nextXrefs);
+      })
+      .catch((reason) => setError(reason.message));
+  }, [sha, activeAddress]);
+
+  return (
+    <section className="cfg-section">
+      <div className="toolbar">
+        <div>
+          <strong>CONTROL-FLOW GRAPH</strong>
+          <span>Compact verified-edge view · indirect targets remain unresolved</span>
+        </div>
+        <label>
+          FUNCTION
+          <select
+            value={addressParam(activeAddress)}
+            onChange={(event) => onAddressChange(event.target.value, 'cfg')}
+            aria-label="CFG function"
+          >
+            {(catalog?.items || []).map((item) => (
+              <option key={item.address} value={addressParam(item.address)}>
+                {item.name} · {formatHex(item.address)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <ErrorBanner message={error} />
+      {!report ? (
+        !error && <Loading label="기본 블록과 분기 edge를 구성하는 중" />
+      ) : (
+        <div className="cfg-workspace">
+          <div className="cfg-canvas" aria-label="Control-flow basic blocks">
+            <div className="cfg-summary">
+              <span>{report.function.name}</span>
+              <code>{formatHex(report.function.address)}</code>
+              <Badge tone={report.status === 'completed' ? 'green' : 'warn'}>
+                {report.status.replace('_', ' ')}
+              </Badge>
+              <span>
+                {report.node_count} blocks · {report.edge_count} edges
+              </span>
+            </div>
+            {report.nodes.map((node) => (
+              <article className="cfg-node" key={node.id}>
+                <header>
+                  <button onClick={() => onAddressChange(node.start, 'disassembly')}>
+                    {formatHex(node.start)}–{formatHex(node.end)}
+                  </button>
+                  {node.conditional_branch && <Badge tone="warn">CONDITIONAL</Badge>}
+                </header>
+                <div className="cfg-instructions">
+                  {node.instructions.slice(0, 12).map((instruction) => (
+                    <div key={instruction.address}>
+                      <code className="address">{formatHex(instruction.address)}</code>
+                      <code className="mnemonic">{instruction.mnemonic}</code>
+                      <code>{instruction.op_str}</code>
+                    </div>
+                  ))}
+                </div>
+                <footer>
+                  <span>
+                    IN{' '}
+                    {node.predecessors.length
+                      ? node.predecessors.map((value) => formatHex(value)).join(', ')
+                      : 'entry'}
+                  </span>
+                  <span>
+                    OUT{' '}
+                    {node.successors.length
+                      ? node.successors.map((value) => formatHex(value)).join(', ')
+                      : 'return'}
+                  </span>
+                </footer>
+              </article>
+            ))}
+          </div>
+          <aside className="cfg-inspector">
+            <div className="inspector-heading">CFG INSPECTOR</div>
+            <h3>Verified relations</h3>
+            <div className="edge-list">
+              {report.edges.map((edge) => (
+                <div key={edge.id}>
+                  <Badge tone={edge.type === 'true' ? 'green' : 'cyan'}>
+                    {edge.type}
+                  </Badge>
+                  <code>{formatHex(edge.source)}</code>
+                  <span>→</span>
+                  <code>{formatHex(edge.target)}</code>
+                </div>
+              ))}
+              {!report.edges.length && <p>No internal branch edges.</p>}
+            </div>
+            <h3>Incoming xrefs</h3>
+            <div className="xref-list">
+              {(xrefs?.items || []).map((xref) => (
+                <button
+                  key={`${xref.source}-${xref.target}-${xref.kind}`}
+                  onClick={() => onAddressChange(xref.source, 'disassembly')}
+                >
+                  <Badge tone="cyan">{xref.kind}</Badge>
+                  <code>{formatHex(xref.source)}</code>
+                  <span>{xref.source_function || 'unknown function'}</span>
+                </button>
+              ))}
+              {xrefs && !xrefs.items.length && <p>No incoming direct xrefs.</p>}
+            </div>
+            <div className="cfg-limitations">
+              <strong>LIMITATIONS</strong>
+              {report.limitations.map((item) => (
+                <p key={item}>◇ {item}</p>
+              ))}
+            </div>
+          </aside>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Disassembly({ sha, info, selectedAddress, onAddressChange }) {
   const [instructions, setInstructions] = useState(null);
   const [count, setCount] = useState(250);
   const [architecture, setArchitecture] = useState('x86_64');
   const [baseAddress, setBaseAddress] = useState('0x0');
+  const [addressInput, setAddressInput] = useState(selectedAddress || '');
+  const [requestedAddress, setRequestedAddress] = useState(selectedAddress || '');
+  const [query, setQuery] = useState('');
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setAddressInput(selectedAddress || '');
+    setRequestedAddress(selectedAddress || '');
+  }, [selectedAddress]);
 
   useEffect(() => {
     setInstructions(null);
@@ -349,21 +695,75 @@ function Disassembly({ sha, info }) {
         setError('RAW base address는 0부터 0xffffffffffffffff 사이의 정수여야 합니다.');
         return;
       }
+    } else if (requestedAddress) {
+      try {
+        const parsedAddress = BigInt(requestedAddress.trim());
+        if (parsedAddress < 0n || parsedAddress > 0xffffffffffffffffn)
+          throw new RangeError();
+        options = { address: parsedAddress.toString() };
+      } catch {
+        setInstructions([]);
+        setError('주소는 0부터 0xffffffffffffffff 사이의 정수여야 합니다.');
+        return;
+      }
     }
     api
       .disassembly(sha, count, options)
       .then(setInstructions)
       .catch((reason) => setError(reason.message));
-  }, [sha, count, architecture, baseAddress, info.format]);
+  }, [sha, count, architecture, baseAddress, requestedAddress, info.format]);
 
   if (error) return <ErrorBanner message={error} />;
   if (!instructions) return <Loading label="Capstone 디스어셈블러 실행 중" />;
+  const visibleInstructions = instructions.filter((instruction) => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return true;
+    return (
+      instruction.mnemonic.toLowerCase().includes(needle) ||
+      instruction.op_str.toLowerCase().includes(needle) ||
+      formatHex(instruction.address).includes(needle)
+    );
+  });
   return (
     <section>
       <div className="toolbar">
         <div>
           <strong>LINEAR DISASSEMBLY</strong>
-          <span>{instructions.length} instructions</span>
+          <span>
+            {visibleInstructions.length} / {instructions.length} instructions in current
+            window
+          </span>
+        </div>
+        {info.format !== 'RAW' && (
+          <form
+            className="address-search"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setRequestedAddress(addressInput);
+              if (addressInput) onAddressChange(addressInput, 'disassembly');
+            }}
+          >
+            <label>
+              ADDRESS
+              <input
+                className="mono-input"
+                value={addressInput}
+                onChange={(event) => setAddressInput(event.target.value)}
+                placeholder="entry or 0x401000"
+                aria-label="Disassembly address"
+              />
+            </label>
+            <button type="submit">GO</button>
+          </form>
+        )}
+        <div className="search-box disassembly-filter">
+          <Icon name="search" size={16} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="opcode, operand, address…"
+            aria-label="Filter disassembly"
+          />
         </div>
         <label>
           표시 개수
@@ -401,7 +801,7 @@ function Disassembly({ sha, info }) {
         )}
       </div>
       <div className="code-view">
-        {instructions.map((instruction) => {
+        {visibleInstructions.map((instruction) => {
           const flow = /^(call|j|ret)/.test(instruction.mnemonic);
           return (
             <div
@@ -843,14 +1243,18 @@ function HexView({ sha }) {
  *   sha: string,
  *   binary: any,
  *   activeTab?: string,
- *   onTabChange?: (nextTab: string) => void
+ *   selectedAddress?: string,
+ *   onTabChange?: (nextTab: string) => void,
+ *   onAddressChange?: (address: number|string, nextTab: string) => void
  * }} props
  */
 export function Analysis({
   sha,
   binary,
   activeTab = 'overview',
+  selectedAddress = '',
   onTabChange = () => {},
+  onAddressChange = () => {},
 }) {
   const [info, setInfo] = useState(null);
   const [contextSecurity, setContextSecurity] = useState(null);
@@ -965,7 +1369,28 @@ export function Analysis({
       ) : (
         <div className="tab-content">
           {tab === 'overview' && <Overview sha={sha} info={info} />}
-          {tab === 'disassembly' && <Disassembly sha={sha} info={info} />}
+          {tab === 'functions' && (
+            <FunctionsView
+              sha={sha}
+              selectedAddress={selectedAddress}
+              onAddressChange={onAddressChange}
+            />
+          )}
+          {tab === 'disassembly' && (
+            <Disassembly
+              sha={sha}
+              info={info}
+              selectedAddress={selectedAddress}
+              onAddressChange={onAddressChange}
+            />
+          )}
+          {tab === 'cfg' && (
+            <CFGView
+              sha={sha}
+              selectedAddress={selectedAddress}
+              onAddressChange={onAddressChange}
+            />
+          )}
           {tab === 'gadgets' && <Gadgets sha={sha} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}

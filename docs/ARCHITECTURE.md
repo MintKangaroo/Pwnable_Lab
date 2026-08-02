@@ -25,7 +25,8 @@ FastAPI Control Plane
       ├── raw byte metadata + opt-in disassembly
       ├── interpreter / dynamic tags / relocations
       ├── evidence-based checksec / call-site heuristic
-      ├── Capstone disassembly / gadgets
+      ├── Capstone disassembly / function recovery / basic-block CFG / xref
+      ├── bounded gadget scan
       └── strings / GOT·PLT / hex
         │
         ├── SQLite (local)
@@ -104,7 +105,8 @@ inline queue는 요청 안에서 완료되므로 API 응답 시점에는 보통 
 
 - Dashboard: recent workspaces, analysis queue, 실제 symbol finding 후보
 - Binary Workspace: URL tab, binary identity, analysis status, protection context
-- 기존 Disassembly/ROP/Symbols/Strings/GOT/Hex 분석 view
+- Functions/CFG/Disassembly와 URL address 기반 근거 이동
+- 기존 ROP/Symbols/Strings/GOT/Hex 분석 view
 - Phase 2 evidence/confidence protection matrix와 linking identity
 - Payload Studio와 교육용 Challenges
 
@@ -118,7 +120,7 @@ inline queue는 요청 안에서 완료되므로 API 응답 시점에는 보통 
 ### 현재
 
 - Browser ↔ FastAPI: 신뢰하지 않는 입력
-- FastAPI ↔ parser: 신뢰하지 않는 ELF bytes
+- FastAPI ↔ parser: 신뢰하지 않는 ELF/PE/raw bytes
 - FastAPI ↔ storage: application-owned content-addressed directory
 - FastAPI ↔ DB: parameterized SQLAlchemy operations
 
@@ -143,5 +145,7 @@ non-root, cap drop, seccomp, no-new-privileges, PID/CPU/memory/file/time/output 
 - 동적 분석과 exploit 실행은 구현되지 않았다.
 - ELF 위험 함수는 symbol/direct-call, PE는 import heuristic이며 취약점 확정이 아니다.
 - PLT 주소는 ABI section layout에서 파생한 inferred 값이며 relocation target과 구분된다.
+- CFG는 statically resolved direct edge만 포함하며 indirect jump table을 복원했다고 표시하지
+  않는다.
 
 따라서 현재 버전을 공개 인터넷 운영 서비스로 노출하지 않는다.

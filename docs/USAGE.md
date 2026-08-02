@@ -30,20 +30,25 @@ Dashboard는 실제 API에서 다음을 표시한다.
 포맷별로 분석 가능한 탭만 표시한다.
 
 - **Overview**: identity, protection matrix, 위험 symbol 후보, memory segment
+- **Functions**: 함수 시작·경계의 verification, confidence, evidence
 - **Disassembly**: entry부터 제한된 수의 Capstone instruction
+- **CFG**: 함수별 basic block, predecessor/successor, direct edge, incoming xref
 - **ROP Gadgets**: 실행 section의 `ret` 종결 gadget과 text filter
 - **Symbols**: static/dynamic symbol 검색
 - **Strings**: ASCII/UTF-16LE string
 - **GOT / PLT**: 관련 section과 undefined dynamic imports
 - **Hex View**: 512-byte page 기반 file view
 
-PE는 ROP Gadgets와 GOT/PLT 탭을 표시하지 않고 imports/exports를 Symbols에
-표시한다. Raw는 Overview, Disassembly, Strings, Hex View만 표시한다.
+PE는 Functions/CFG를 지원하지만 ROP Gadgets와 GOT/PLT 탭은 표시하지 않고
+imports/exports를 Symbols에 표시한다. Raw는 함수 경계를 추측하지 않으므로 Overview,
+Disassembly, Strings, Hex View만 표시한다.
 
 Raw Disassembly에서는 architecture (`x86` 또는 `x86-64`)와 base address를
 사용자가 직접 지정한다. 플랫폼은 이 값들을 추측하지 않는다.
 
-탭은 URL에 반영되므로 새로고침, 뒤로 가기, 링크 공유가 가능하다.
+탭과 선택 주소는 URL의 path와 `address` query에 반영되므로 새로고침, 뒤로 가기,
+링크 공유가 가능하다. Functions의 `Open CFG`와 CFG block 주소를 이용해 같은 주소 근거를
+유지한 채 화면 사이를 이동할 수 있다.
 
 Context Header에는 파일명, architecture, bit, short SHA, 분석 상태, compact protection
 요약이 표시된다. `Re-run static analysis`는 업로드 파일을 실행하지 않고 metadata

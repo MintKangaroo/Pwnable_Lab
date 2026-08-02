@@ -8,7 +8,7 @@
 
 ```text
 POST /binaries
-  → ELF validation
+  → ELF/PE structure validation or raw-binary policy
   → atomic SHA-256 storage
   → not_started
 
@@ -37,7 +37,7 @@ Raw 디스어셈블리는 `architecture=x86|x86_64`를 반드시 전달해야 �
 GET /api/v1/binaries/{id}/disassembly?architecture=x86_64&base_address=4194304
 ```
 
-## Phase 2 ELF endpoints
+## Static analysis endpoints
 
 | Method | Path | 결과 |
 |---|---|---|
@@ -46,16 +46,28 @@ GET /api/v1/binaries/{id}/disassembly?architecture=x86_64&base_address=4194304
 | `GET` | `/binaries/{id}/symbols` | `kind`, `offset`, `limit` 기반 symbol page |
 | `GET` | `/binaries/{id}/imports` | undefined dynamic symbol page |
 | `GET` | `/binaries/{id}/exports` | defined global/weak dynamic symbol page |
-| `GET` | `/binaries/{id}/functions` | defined `STT_FUNC` symbol page |
+| `GET` | `/binaries/{id}/functions` | verified/inferred function index; `q`, `offset`, `limit` |
+| `GET` | `/binaries/{id}/functions/{address}` | selected function boundary, evidence, instructions |
+| `GET` | `/binaries/{id}/functions/{address}/cfg` | basic blocks, internal direct edges, call targets |
+| `GET` | `/binaries/{id}/xrefs` | `address`, `direction`, `kind`, pagination 기반 xref |
 | `GET` | `/binaries/{id}/relocations` | normalized relocation page |
 | `GET` | `/binaries/{id}/libraries` | linking mode, interpreter, DT_NEEDED, libc, search paths |
 | `GET` | `/binaries/{id}/got` | relocation으로 검증된 GOT target |
 | `GET` | `/binaries/{id}/plt` | PLT layout에서 파생한 stub candidate |
 | `GET` | `/binaries/{id}/vulns` | 위험 API와 direct-call 후보 |
 
-PE에서 `imports`, `exports`, `functions`, `relocations`, `libraries`는 PE 테이블을
+PE에서 `imports`, `exports`, `relocations`, `libraries`는 PE 테이블을
 정규화해 반환한다. GOT/PLT와 ROP gadget 스캔은 현재 ELF 전용이며 PE/raw
 요청은 지원하지 않는 기능으로 명시적으로 거부된다.
+
+`functions`는 ELF symbol/entry 또는 PE export/entry에서 확인한 주소와 executable
+direct-call target에서 추론한 주소를 합친다. raw binary에는 loader map과 함수 경계가
+없으므로 function/CFG/xref 요청을 400으로 거부한다. `{address}`와 xref `address`는
+`0x401000` 또는 10진수 형식을 지원한다.
+
+`xrefs`의 `direction`은 `to|from`, `kind`는
+`all|call|jump|conditional_jump`이다. 현재 direct immediate와 x86 RIP-relative
+memory operand만 정적으로 해석한다.
 
 `symbols`의 `kind`는 `all`, `static`, `dynamic`, `imports`, `exports`, `functions` 중 하나다.
 `offset` 기본값은 0, `limit` 기본값은 200이며 최대 5000이다.

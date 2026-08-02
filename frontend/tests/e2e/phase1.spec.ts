@@ -82,6 +82,22 @@ test('upload an ELF, complete analysis, and preserve tab state in the URL', asyn
   await page.reload();
   await expect(page).toHaveURL(/\/disassembly$/);
   await expect(page.getByText('LINEAR DISASSEMBLY')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Functions' }).click();
+  await expect(page.getByText('FUNCTION INDEX')).toBeVisible();
+  const mainRow = page.getByRole('row').filter({ hasText: 'main' }).first();
+  await mainRow.getByRole('button', { name: 'main', exact: true }).click();
+  await expect(page).toHaveURL(/\/functions\?address=0x[0-9a-f]+$/);
+  await mainRow.getByRole('button', { name: 'Open CFG' }).click();
+  await expect(page).toHaveURL(/\/cfg\?address=0x[0-9a-f]+$/);
+  await expect(page.getByText('CONTROL-FLOW GRAPH')).toBeVisible();
+  await expect(page.getByText('CFG INSPECTOR')).toBeVisible();
+  if (process.env.PWNPILOT_CAPTURE_DOCS === '1') {
+    await page.screenshot({
+      path: '../docs/screenshots/13-function-cfg.png',
+      fullPage: true,
+    });
+  }
 });
 
 test('upload PE and raw artifacts with format-specific workspace capabilities', async ({
@@ -98,6 +114,8 @@ test('upload PE and raw artifacts with format-specific workspace capabilities', 
   await expect(page.getByRole('heading', { name: 'authorized.exe' })).toBeVisible();
   await expect(page.getByText('DEP / NX COMPAT', { exact: true })).toBeVisible();
   await expect(page.getByText('CONTROL FLOW GUARD', { exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Functions' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'CFG' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'ROP Gadgets' })).toHaveCount(0);
   await expect(page.getByRole('tab', { name: 'GOT / PLT' })).toHaveCount(0);
 
@@ -124,6 +142,8 @@ test('upload PE and raw artifacts with format-specific workspace capabilities', 
     });
   await expect(page.getByRole('heading', { name: 'shellcode.bin' })).toBeVisible();
   await expect(page.getByText('LOADER MITIGATIONS', { exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Functions' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'CFG' })).toHaveCount(0);
   await page.getByRole('tab', { name: 'Disassembly' }).click();
   await expect(page.getByLabel('Raw binary base address')).toBeVisible();
   await expect(page.getByText('LINEAR DISASSEMBLY', { exact: true })).toBeVisible();

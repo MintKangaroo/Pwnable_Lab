@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import asdict, dataclass
 
 from pwnable_lab.analyzer.checksec import run_checksec
+from pwnable_lab.analyzer.control_flow import ControlFlowAnalyzer
 from pwnable_lab.analyzer.disasm import disassemble
 from pwnable_lab.analyzer.entropy import raw_entropy_windows, shannon_entropy
 from pwnable_lab.analyzer.gadgets import find_gadgets, search_gadgets
@@ -287,6 +288,86 @@ class AnalysisService:
         normalized = [asdict(symbol) for symbol in elf_symbols]
         return _page(normalized, offset=offset, limit=limit)
 
+    def functions(
+        self,
+        data: bytes,
+        *,
+        query: str | None,
+        offset: int,
+        limit: int,
+    ) -> dict:
+        analyzer = self._control_flow(data)
+        functions, truncated = analyzer.functions(
+            max_instructions=self.settings.max_disasm_instructions
+        )
+        normalized = [asdict(item) for item in functions]
+        if query:
+            needle = query.strip().lower()
+            normalized = [
+                item
+                for item in normalized
+                if needle in item["name"].lower()
+                or any(needle in alias.lower() for alias in item["aliases"])
+                or needle in f"0x{item['address']:x}"
+            ]
+        result = _page(normalized, offset=offset, limit=limit)
+        result.update(
+            {
+                "format": analyzer.artifact_format,
+                "status": "partially_completed" if truncated else "completed",
+                "verification": "inferred",
+                "evidence": [
+                    "Function starts combine verified symbols/entry points and inferred direct-call targets",
+                    "Function boundaries without a valid symbol size are inferred from the next start or region end",
+                ],
+            }
+        )
+        return result
+
+    def function_detail(self, data: bytes, *, address: int) -> dict:
+        return self._control_flow(data).function_detail(
+            address,
+            max_instructions=self.settings.max_disasm_instructions,
+        )
+
+    def cfg(self, data: bytes, *, address: int) -> dict:
+        return self._control_flow(data).cfg(
+            address,
+            max_instructions=self.settings.max_disasm_instructions,
+        )
+
+    def xrefs(
+        self,
+        data: bytes,
+        *,
+        address: int | None,
+        direction: str,
+        kind: str,
+        offset: int,
+        limit: int,
+    ) -> dict:
+        analyzer = self._control_flow(data)
+        xrefs, truncated = analyzer.xrefs(
+            address=address,
+            direction=direction,
+            kind=kind,
+            max_instructions=self.settings.max_disasm_instructions,
+        )
+        result = _page([asdict(item) for item in xrefs], offset=offset, limit=limit)
+        result.update(
+            {
+                "format": analyzer.artifact_format,
+                "direction": direction,
+                "kind": kind,
+                "status": "partially_completed" if truncated else "completed",
+                "verification": "verified",
+                "limitations": [
+                    "Only direct branch immediates and x86 RIP-relative memory references are resolved"
+                ],
+            }
+        )
+        return result
+
     def relocations(self, data: bytes, *, offset: int, limit: int) -> dict:
         artifact_format = detect_format(data)
         if artifact_format is ArtifactFormat.PE:
@@ -532,6 +613,17 @@ class AnalysisService:
             "total_pages": (len(data) + size - 1) // size,
             "rows": rows,
         }
+
+    def _control_flow(self, data: bytes) -> ControlFlowAnalyzer:
+        artifact_format = detect_format(data)
+        if artifact_format is ArtifactFormat.ELF:
+            return ControlFlowAnalyzer.from_elf(parse_elf(data))
+        if artifact_format is ArtifactFormat.PE:
+            return ControlFlowAnalyzer.from_pe(parse_pe(data))
+        raise AnalysisError(
+            "Function boundaries, xrefs, and CFG are unavailable for raw artifacts "
+            "without a verified loader map."
+        )
 
     @staticmethod
     def _pe_import_symbol(item) -> dict:  # noqa: ANN001

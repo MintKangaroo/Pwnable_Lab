@@ -23,6 +23,7 @@ from pwnable_lab.api.services import AnalysisService
 from pwnable_lab.config import Settings
 from pwnable_lab.database.models import AnalysisJobRecord
 from pwnable_lab.database.repository import BinaryRepository
+from pwnable_lab.errors import AnalysisError
 from pwnable_lab.jobs.queue import AnalysisJobQueue
 
 router = APIRouter(prefix="/binaries", tags=["binaries"])
@@ -258,13 +259,57 @@ def binary_exports(
 @router.get("/{sha256}/functions")
 def binary_functions(
     sha256: str,
+    q: str | None = Query(default=None, max_length=256),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=200, ge=1, le=5000),
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
 ) -> dict:
-    return service.symbols(
-        repo.load_bytes(sha256), kind="functions", offset=offset, limit=limit
+    return service.functions(
+        repo.load_bytes(sha256), query=q, offset=offset, limit=limit
+    )
+
+
+@router.get("/{sha256}/functions/{address}")
+def binary_function_detail(
+    sha256: str,
+    address: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.function_detail(
+        repo.load_bytes(sha256), address=_parse_address(address)
+    )
+
+
+@router.get("/{sha256}/functions/{address}/cfg")
+def binary_function_cfg(
+    sha256: str,
+    address: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.cfg(repo.load_bytes(sha256), address=_parse_address(address))
+
+
+@router.get("/{sha256}/xrefs")
+def binary_xrefs(
+    sha256: str,
+    address: str | None = Query(default=None, max_length=32),
+    direction: Literal["to", "from"] = Query(default="to"),
+    kind: Literal["all", "call", "jump", "conditional_jump"] = Query(default="all"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, ge=1, le=5000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    return service.xrefs(
+        repo.load_bytes(sha256),
+        address=_parse_address(address) if address is not None else None,
+        direction=direction,
+        kind=kind,
+        offset=offset,
+        limit=limit,
     )
 
 
@@ -356,3 +401,13 @@ def binary_hex(
     service: AnalysisService = Depends(get_service),
 ) -> dict:
     return service.hexdump(repo.load_bytes(sha256), page=page)
+
+
+def _parse_address(value: str) -> int:
+    try:
+        address = int(value, 0)
+    except ValueError as exc:
+        raise AnalysisError(f"Invalid address: {value}") from exc
+    if not 0 <= address <= 0xFFFFFFFFFFFFFFFF:
+        raise AnalysisError("Address must be an unsigned 64-bit integer.")
+    return address

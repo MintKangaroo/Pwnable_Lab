@@ -91,3 +91,28 @@ def sample_raw() -> bytes:
     """Raw x86-like bytes with no executable container header."""
 
     return b"\x90" * 16 + b"HELLO\x00" + b"\x48\x31\xc0\xc3"
+
+
+def sample_control_flow_elf() -> bytes:
+    """ELF with one conditional branch and a direct call to a second function."""
+
+    main = (
+        b"\x48\x85\xff"  # test rdi, rdi
+        b"\x74\x06"  # je main+0xb
+        b"\xe8\x06\x00\x00\x00"  # call helper at .text+0x10
+        b"\xc3"  # ret
+        b"\x31\xc0"  # xor eax, eax
+        b"\xc3"  # ret
+    )
+    padding = b"\x90\x90"
+    helper = b"\x55\x48\x89\xe5\xc3"  # push rbp ; mov rbp, rsp ; ret
+    return ElfBuilder(
+        text=main + padding + helper,
+        symbols=[
+            Symbol("main", ".text", 0, len(main)),
+            Symbol("helper", ".text", len(main) + len(padding), len(helper)),
+        ],
+        pie=False,
+        nx=True,
+        relro="partial",
+    ).build()

@@ -36,6 +36,10 @@ PwnPilot은 ELF, Windows PE/EXE, raw binary의 구조와 보호 기법, 공격 �
 
 ![PwnPilot Raw Overview](docs/screenshots/12-raw-overview.png)
 
+### Function CFG Workspace
+
+![PwnPilot Function CFG](docs/screenshots/13-function-cfg.png)
+
 ## 5분 빠른 시작
 
 가장 간단한 방법은 Docker Compose입니다. Docker와 Compose v2만 있으면 됩니다.
@@ -61,7 +65,9 @@ docker compose up --build -d
 1. Dashboard의 **Upload binary**를 눌러 ELF, PE/EXE, raw binary를 선택합니다.
 2. 업로드가 완료되면 정적 분석이 자동 시작됩니다.
 3. **Overview**에서 포맷 identity, 보호 기법, 근거, confidence, 위험 API 후보를 확인합니다.
-4. **Disassembly**, **ROP Gadgets**, **Symbols**, **Strings**, **GOT/PLT**, **Hex View**로
+4. **Functions**에서 검증된 시작점과 추론된 경계를 구분하고 **CFG**에서 기본 블록,
+   direct branch edge, xref를 확인합니다.
+5. **Disassembly**, **ROP Gadgets**, **Symbols**, **Strings**, **GOT/PLT**, **Hex View**로
    필요한 근거를 더 자세히 탐색합니다.
 
 현재 버전은 업로드한 파일을 **실행하지 않고** 정적 분석만 수행합니다.
@@ -112,6 +118,15 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 - raw disassembly는 `x86`/`x86_64`와 base address를 명시한 경우에만 실행
 - malformed PE, 일반 텍스트, archive signature 거부
 
+### Phase 3 static control-flow increment
+
+- ELF/PE x86·x86-64 실행 영역을 공통 code-region 모델로 정규화
+- symbol/export/entry 기반 verified function start와 direct-call 기반 inferred start 분리
+- 유효한 symbol size만 verified boundary로 사용하고 나머지 경계는 inferred 표시
+- 함수별 명령, basic block, predecessor/successor, conditional edge, call target
+- direct call/jump와 RIP-relative memory reference xref
+- URL의 `address` 상태를 Functions, CFG, Disassembly 사이에서 유지
+
 ### 재사용된 정적 분석 기능
 
 | 분석 | 현재 내용 |
@@ -120,6 +135,7 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 | Checksec | 근거/영향/전략/confidence가 포함된 14개 보호·링킹 항목 |
 | Attack surface | 위험 symbol과 direct call 후보; 인자 추정은 inferred로 표시 |
 | Disassembly | Capstone 기반 x86/x86-64 선형 디스어셈블 |
+| Functions / CFG | 근거 기반 함수 경계, 기본 블록, direct edge와 xref |
 | ROP | 실행 section의 짧은 `ret` 가젯 검색 |
 | Strings | ASCII, UTF-16LE |
 | GOT/PLT | verified relocation target과 inferred PLT stub |
@@ -213,7 +229,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/symbols` | 종류별 paginated symbol |
 | `GET` | `/binaries/{binary_id}/imports` | paginated imports |
 | `GET` | `/binaries/{binary_id}/exports` | paginated exports |
-| `GET` | `/binaries/{binary_id}/functions` | symbol 기반 functions |
+| `GET` | `/binaries/{binary_id}/functions` | 근거 기반 paginated function index |
+| `GET` | `/binaries/{binary_id}/functions/{address}` | 함수 경계, 근거, 명령어 |
+| `GET` | `/binaries/{binary_id}/functions/{address}/cfg` | basic-block CFG |
+| `GET` | `/binaries/{binary_id}/xrefs` | direct call/jump xref page |
 | `GET` | `/binaries/{binary_id}/relocations` | paginated relocation |
 | `GET` | `/binaries/{binary_id}/libraries` | interpreter와 dependency |
 | `GET` | `/binaries/{binary_id}/got` | verified GOT targets |
@@ -337,7 +356,7 @@ Pwnable_Lab/
 ## 로드맵
 
 - Phase 2: ELF 정적 분석과 PE/raw format-aware intake 구현 완료; 데이터 흐름 정밀화 지속
-- Phase 3: 함수/CFG/xref/고급 gadget과 ROP Studio
+- Phase 3: 함수/CFG/direct xref 1차 구현 완료; 고급 함수 복구·gadget semantics·ROP Studio 진행
 - Phase 4: core/GDB log/stack/memory/crash 분석
 - Phase 5: 근거 기반 exploit strategy와 pwntools draft
 - Phase 6A: 비대화형 disposable sandbox

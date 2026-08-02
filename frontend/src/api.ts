@@ -80,6 +80,32 @@ export interface VulnerabilityFinding {
   false_positive_factors: string[];
 }
 
+export interface FunctionInfo {
+  address: number;
+  end: number;
+  size: number;
+  name: string;
+  aliases: string[];
+  region: string;
+  source: string;
+  address_verification: 'verified' | 'inferred';
+  boundary_verification: 'verified' | 'inferred';
+  verification: 'verified' | 'inferred';
+  confidence: number;
+  evidence: string[];
+}
+
+export interface FunctionPage {
+  items: FunctionInfo[];
+  total: number;
+  offset: number;
+  limit: number;
+  format: 'ELF' | 'PE';
+  status: 'completed' | 'partially_completed';
+  verification: 'inferred';
+  evidence: string[];
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${BASE}${path}`, options);
   if (!response.ok) {
@@ -128,18 +154,48 @@ export const api = {
       `/binaries/${sha}/gadgets${query ? `?q=${encodeURIComponent(query)}` : ''}`,
     ),
   got: (sha: string) => request<Record<string, unknown>>(`/binaries/${sha}/got`),
+  functions: (sha: string, query = '') =>
+    request<FunctionPage>(
+      `/binaries/${sha}/functions${query ? `?q=${encodeURIComponent(query)}` : ''}`,
+    ),
+  functionDetail: (sha: string, address: number | string) =>
+    request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}`),
+  cfg: (sha: string, address: number | string) =>
+    request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}/cfg`),
+  xrefs: (
+    sha: string,
+    options: {
+      address?: number | string;
+      direction?: 'to' | 'from';
+      kind?: 'all' | 'call' | 'jump' | 'conditional_jump';
+    } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (options.address !== undefined) params.set('address', String(options.address));
+    if (options.direction) params.set('direction', options.direction);
+    if (options.kind) params.set('kind', options.kind);
+    const query = params.toString();
+    return request<Record<string, unknown>>(
+      `/binaries/${sha}/xrefs${query ? `?${query}` : ''}`,
+    );
+  },
   strings: (sha: string, minLength = 4) =>
     request<unknown[]>(`/binaries/${sha}/strings?min_length=${minLength}`),
   disassembly: (
     sha: string,
     count = 250,
-    options: { architecture?: 'x86' | 'x86_64'; baseAddress?: number | string } = {},
+    options: {
+      architecture?: 'x86' | 'x86_64';
+      baseAddress?: number | string;
+      address?: number | string;
+    } = {},
   ) => {
     const params = new URLSearchParams({ count: String(count) });
     if (options.architecture) params.set('architecture', options.architecture);
     if (options.baseAddress !== undefined) {
       params.set('base_address', String(options.baseAddress));
     }
+    if (options.address !== undefined) params.set('address', String(options.address));
     return request<unknown[]>(`/binaries/${sha}/disassembly?${params}`);
   },
   entropy: (sha: string) =>

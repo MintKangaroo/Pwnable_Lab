@@ -63,6 +63,22 @@ GOT entry 주소는 relocation의 `r_offset`에서 읽으므로 `verified`다. P
 `.plt` 또는 `.plt.sec`의 `sh_entsize`와 PLT relocation 순서에서 계산하므로 `inferred`다.
 entry size가 없으면 주소를 만들지 않고 `unknown`을 반환한다.
 
+## Function recovery, xref, CFG
+
+ELF와 PE의 file-backed executable section을 공통 code-region으로 정규화한다.
+
+- ELF `STT_FUNC`, PE export, loader entry point: start address `verified`
+- executable region을 향한 direct call: start address `inferred`
+- 유효한 non-zero symbol size: boundary `verified`
+- 다음 함수 또는 executable region 끝에서 계산한 boundary: `inferred`
+
+CFG leader는 함수 시작, direct jump target, 조건 분기 fallthrough, terminator 다음
+명령에서 만든다. Edge는 정적으로 확인된 direct target에만 생성한다. indirect jump,
+jump table, exception flow, tail-call 여부는 데이터 흐름 또는 실행 근거가 없으면 만들지
+않는다. xref는 direct call/jump와 x86 RIP-relative memory operand만 반환한다.
+
+Raw bytes에는 loader map과 검증된 entry point가 없으므로 함수/CFG를 추측하지 않는다.
+
 ## Checksec
 
 각 보호 항목은 다음을 제공한다.

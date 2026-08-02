@@ -389,6 +389,8 @@ function BinaryWorkspace({ binaries }: { binaries: BinarySummary[] }) {
     tab?: string;
   }>();
   const history = useHistory();
+  const location = useLocation();
+  const selectedAddress = new URLSearchParams(location.search).get('address') || '';
   const binary = binaries.find((item) => item.sha256 === sha);
   if (!binary) {
     return (
@@ -406,9 +408,22 @@ function BinaryWorkspace({ binaries }: { binaries: BinarySummary[] }) {
       sha={sha}
       binary={binary}
       activeTab={tab}
-      onTabChange={(nextTab: string) => history.push(`/binaries/${sha}/${nextTab}`)}
+      selectedAddress={selectedAddress}
+      onTabChange={(nextTab: string) =>
+        history.push(
+          `/binaries/${sha}/${nextTab}${selectedAddress ? `?address=${selectedAddress}` : ''}`,
+        )
+      }
+      onAddressChange={(address: number | string, nextTab: string) =>
+        history.push(`/binaries/${sha}/${nextTab}?address=${formatAddress(address)}`)
+      }
     />
   );
+}
+
+function formatAddress(value: number | string): string {
+  if (typeof value === 'string') return value;
+  return `0x${value.toString(16)}`;
 }
 
 function BinaryIndex({ binaries }: { binaries: BinarySummary[] }) {
