@@ -193,3 +193,69 @@ test('filter verified gadgets and validate an inferred ROP chain', async ({ page
     });
   }
 });
+
+test('analyze a text crash log without executing the target', async ({ page }) => {
+  const existingResponse = await page.request.get('/api/v1/crashes');
+  if (existingResponse.ok()) {
+    const existing = (await existingResponse.json()) as Array<{
+      crash_id: string;
+      filename: string;
+    }>;
+    for (const item of existing.filter(
+      (candidate) => candidate.filename === 'authorized-session.log',
+    )) {
+      await page.request.delete(`/api/v1/crashes/${item.crash_id}`);
+    }
+  }
+  await page.goto('/crashes');
+  await expect(
+    page.getByRole('heading', { name: 'Turn a crash log into evidence.' }),
+  ).toBeVisible();
+
+  const crashLog = `GNU gdb
+(gdb) run
+Program received signal SIGSEGV, Segmentation fault.
+rax 0x0 0
+rbp 0x4242424242424242
+rsp 0x7fffffffe000
+rip 0x6161617461616173
+=> 0x4011a2 <vuln+44>: ret
+0x7fffffffe000: 0x6161617461616173 0x40123a
+0x7fffffffe010: 0x7ffff7e1a490 0x123456789abcde00
+0x00400000 0x00402000 0x2000 0x0 r-xp /tmp/authorized-target
+0x7ffff7dc0000 0x7ffff7fa0000 0x1e0000 0x0 r-xp /lib/libc.so.6
+0x7ffffffde000 0x7ffffffff000 0x21000 0x0 rw-p [stack]
+`;
+  await page.locator('.crash-intake input[type="file"]').setInputFiles({
+    name: 'authorized-session.log',
+    mimeType: 'text/plain',
+    buffer: Buffer.from(crashLog),
+  });
+
+  await expect(page).toHaveURL(/\/crashes\/[0-9a-f-]{36}$/);
+  await expect(
+    page.getByText('authorized-session.log', { exact: true }).last(),
+  ).toBeVisible();
+  await expect(page.locator('.crash-facts')).toContainText('SIGSEGV');
+  await expect(page.locator('.crash-facts')).toContainText('0x6161617461616173');
+  await expect(page.getByText('Instruction Pointer Overwrite')).toBeVisible();
+  await expect(page.locator('.cyclic-evidence')).toContainText('72');
+  await expect(page.locator('.crash-registers')).toContainText('rip');
+  await expect(page.getByRole('tab', { name: /Stack/ })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+
+  await page.getByRole('tab', { name: /Memory maps/ }).click();
+  await expect(page.getByText('/lib/libc.so.6', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Values are observed; semantic labels are heuristic.'),
+  ).toBeVisible();
+
+  if (process.env.PWNPILOT_CAPTURE_DOCS === '1') {
+    await page.screenshot({
+      path: '../docs/screenshots/15-crash-analyzer.png',
+      fullPage: true,
+    });
+  }
+});

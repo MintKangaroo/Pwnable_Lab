@@ -151,6 +151,25 @@ export interface RopChainItem {
   label?: string;
 }
 
+export interface CrashSummary {
+  crash_id: string;
+  sha256: string;
+  filename: string;
+  size: number;
+  binary_id: string | null;
+  analysis_status: 'completed' | 'partially_completed' | 'failed' | 'not_started';
+  signal: string | null;
+  created_at: string;
+}
+
+export interface CrashDetail extends CrashSummary {
+  analyzer_name: string;
+  analyzer_version: string;
+  confidence: number;
+  evidence: unknown[];
+  result: Record<string, unknown>;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${BASE}${path}`, options);
   if (!response.ok) {
@@ -283,6 +302,29 @@ export const api = {
     request<Record<string, unknown>>(`/binaries/${sha}/entropy`),
   hex: (sha: string, page = 0) =>
     request<Record<string, unknown>>(`/binaries/${sha}/hex?page=${page}`),
+
+  crashes: () => request<CrashSummary[]>('/crashes'),
+  crash: (crashId: string) => request<CrashDetail>(`/crashes/${crashId}`),
+  uploadCrash: (file: File, binaryId = '') => {
+    const body = new FormData();
+    body.append('file', file);
+    if (binaryId) body.append('binary_id', binaryId);
+    return request<CrashDetail>('/crashes', { method: 'POST', body });
+  },
+  analyzeCrash: (crashId: string) =>
+    request<CrashDetail>(`/crashes/${crashId}/analyze`, { method: 'POST' }),
+  removeCrash: (crashId: string) =>
+    request<Response>(`/crashes/${crashId}`, { method: 'DELETE' }),
+  crashRegisters: (crashId: string) =>
+    request<Record<string, unknown>>(`/crashes/${crashId}/registers`),
+  crashStack: (crashId: string, offset = 0, limit = 256) =>
+    request<Record<string, unknown>>(
+      `/crashes/${crashId}/stack?offset=${offset}&limit=${limit}`,
+    ),
+  crashMappings: (crashId: string, offset = 0, limit = 256) =>
+    request<Record<string, unknown>>(
+      `/crashes/${crashId}/mappings?offset=${offset}&limit=${limit}`,
+    ),
 
   cyclic: (length: number, n: number) =>
     postJSON<Record<string, unknown>>('/payload/cyclic', { length, n }),

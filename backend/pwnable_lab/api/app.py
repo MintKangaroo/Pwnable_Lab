@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from pwnable_lab import __version__
 from pwnable_lab.api.errors import install_error_handlers
-from pwnable_lab.api.routes import binaries, challenges, health, payload
+from pwnable_lab.api.routes import binaries, challenges, crashes, health, payload
 from pwnable_lab.config import Settings, get_settings
 from pwnable_lab.logging_config import configure_logging
 
@@ -21,6 +21,7 @@ def _build_api(settings: Settings) -> FastAPI:
     install_error_handlers(api)
     api.include_router(health.router)
     api.include_router(binaries.router)
+    api.include_router(crashes.router)
     api.include_router(payload.router)
     api.include_router(challenges.router)
     return api

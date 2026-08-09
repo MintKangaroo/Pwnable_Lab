@@ -36,6 +36,13 @@ def test_cyclic_find_respects_search_limit():
     assert cyclic_find(pattern[100:104], max_length=50) == -1
 
 
+def test_cyclic_n8_is_streamed_within_requested_bound():
+    pattern = cyclic(256, n=8)
+
+    assert len(pattern) == 256
+    assert cyclic_find(pattern[96:104], n=8, max_length=256) == 96
+
+
 def test_cyclic_rejects_invalid_lengths():
     with pytest.raises(ValueError):
         cyclic(-1)

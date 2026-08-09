@@ -13,6 +13,7 @@ import {
 import { api, formatBytes, type BinarySummary, type UploadResult } from './api';
 import { Analysis } from './components/Analysis.jsx';
 import { Challenges } from './components/Challenges.jsx';
+import { CrashAnalyzer } from './components/CrashAnalyzer.jsx';
 import {
   Empty,
   ErrorBanner,
@@ -25,6 +26,7 @@ import { PayloadStudio } from './components/PayloadStudio.jsx';
 const PRIMARY_NAV = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/binaries', label: 'Binaries', icon: 'target', end: false },
+  { to: '/crashes', label: 'Crash Analyzer', icon: 'crash', end: false },
   { to: '/payload', label: 'Payload Studio', icon: 'wrench', end: false },
   { to: '/challenges', label: 'Challenges', icon: 'flag', end: false },
 ];
@@ -543,6 +545,10 @@ export default function App() {
               }
             />
             <Route path="/payload" component={PayloadStudio} />
+            <Route
+              path="/crashes/:crashId?"
+              render={() => <CrashAnalyzer binaries={binaries} />}
+            />
             <Route path="/challenges" component={Challenges} />
             <Redirect to="/" />
           </Switch>

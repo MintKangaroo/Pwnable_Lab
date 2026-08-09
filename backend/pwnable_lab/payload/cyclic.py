@@ -7,30 +7,29 @@ pwntools 의 ``cyclic`` / ``cyclic_find`` 와 동일한 알고리즘(기본 알�
 from __future__ import annotations
 
 import struct
+from collections.abc import Iterator
 
 _DEFAULT_ALPHABET = b"abcdefghijklmnopqrstuvwxyz"
 
 
-def de_bruijn(alphabet: bytes = _DEFAULT_ALPHABET, n: int = 4):
+def de_bruijn(alphabet: bytes = _DEFAULT_ALPHABET, n: int = 4) -> Iterator[int]:
     """De Bruijn 수열 B(k, n) 을 생성하는 제너레이터(무한 아님, 주기 k**n)."""
     k = len(alphabet)
     a = [0] * (k * n)
-    sequence: list[int] = []
 
-    def db(t: int, p: int) -> None:
+    def db(t: int, p: int) -> Iterator[int]:
         if t > n:
             if n % p == 0:
-                sequence.extend(a[1 : p + 1])
+                for index in a[1 : p + 1]:
+                    yield alphabet[index]
         else:
             a[t] = a[t - p]
-            db(t + 1, p)
+            yield from db(t + 1, p)
             for j in range(a[t - p] + 1, k):
                 a[t] = j
-                db(t + 1, t)
+                yield from db(t + 1, t)
 
-    db(1, 1)
-    for i in sequence:
-        yield alphabet[i]
+    yield from db(1, 1)
 
 
 def cyclic(length: int, *, alphabet: bytes = _DEFAULT_ALPHABET, n: int = 4) -> bytes:

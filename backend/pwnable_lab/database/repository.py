@@ -6,13 +6,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from urllib.parse import unquote
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -21,6 +23,8 @@ from pwnable_lab.database.models import (
     AnalysisJobRecord,
     AuditLogRecord,
     BinaryRecord,
+    CrashAnalysisRecord,
+    CrashArtifactRecord,
     SubmissionRecord,
 )
 from pwnable_lab.errors import NotFoundError
@@ -140,6 +144,13 @@ class BinaryRepository:
                     AnalysisJobRecord.binary_sha256 == sha256
                 )
             )
+            # SQLite development connections do not always enforce ON DELETE; keep
+            # crash-log associations consistent across SQLite and PostgreSQL.
+            session.execute(
+                update(CrashArtifactRecord)
+                .where(CrashArtifactRecord.binary_sha256 == sha256)
+                .values(binary_sha256=None)
+            )
             session.delete(record)
             session.add(
                 AuditLogRecord(
@@ -255,3 +266,142 @@ class BinaryRepository:
         total = len(rows)
         solved = sum(r.correct for r in rows)
         return {"attempts": total, "solved": solved}
+
+    # --- 텍스트 크래시 로그 ---
+    def store_crash_log(
+        self, text: str, filename: str, *, binary_sha256: str | None = None
+    ) -> CrashArtifactRecord:
+        encoded = text.encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()
+        safe_name = _safe_filename(filename, fallback="crash.log")
+        with self.session_factory() as session:
+            if (
+                binary_sha256 is not None
+                and session.get(BinaryRecord, binary_sha256) is None
+            ):
+                raise NotFoundError(f"바이너리를 찾을 수 없습니다: {binary_sha256}")
+            record = CrashArtifactRecord(
+                id=str(uuid.uuid4()),
+                sha256=digest,
+                filename=safe_name,
+                size=len(encoded),
+                binary_sha256=binary_sha256,
+                log_text=text,
+            )
+            session.add(record)
+            session.add(
+                AuditLogRecord(
+                    action="crash.uploaded",
+                    resource_type="crash_artifact",
+                    resource_id=record.id,
+                    detail={
+                        "sha256": digest,
+                        "size": len(encoded),
+                        "binary_sha256": binary_sha256,
+                        "kind": "text_log",
+                    },
+                )
+            )
+            session.commit()
+            session.refresh(record)
+            return record
+
+    def save_crash_analysis(self, crash_id: str, result: dict) -> CrashAnalysisRecord:
+        now = datetime.now(timezone.utc)
+        with self.session_factory() as session:
+            artifact = session.get(CrashArtifactRecord, crash_id)
+            if artifact is None:
+                raise NotFoundError(f"크래시 로그를 찾을 수 없습니다: {crash_id}")
+            record = session.get(CrashAnalysisRecord, crash_id)
+            if record is None:
+                record = CrashAnalysisRecord(
+                    crash_id=crash_id,
+                    analyzer_name=str(result["analyzer_name"]),
+                    analyzer_version=str(result["analyzer_version"]),
+                    status=str(result["status"]),
+                    error=result.get("error"),
+                    confidence=float(result["confidence"]),
+                    evidence=list(result.get("evidence", [])),
+                    result=result,
+                )
+                session.add(record)
+            else:
+                record.analyzer_name = str(result["analyzer_name"])
+                record.analyzer_version = str(result["analyzer_version"])
+                record.status = str(result["status"])
+                record.error = result.get("error")
+                record.confidence = float(result["confidence"])
+                record.evidence = list(result.get("evidence", []))
+                record.result = result
+                record.updated_at = now
+            session.add(
+                AuditLogRecord(
+                    action="crash.analyzed",
+                    resource_type="crash_artifact",
+                    resource_id=crash_id,
+                    detail={
+                        "status": result["status"],
+                        "analyzer": result["analyzer_name"],
+                    },
+                )
+            )
+            session.commit()
+            session.refresh(record)
+            return record
+
+    def get_crash(self, crash_id: str) -> CrashArtifactRecord:
+        with self.session_factory() as session:
+            record = session.get(CrashArtifactRecord, crash_id)
+            if record is None:
+                raise NotFoundError(f"크래시 로그를 찾을 수 없습니다: {crash_id}")
+            return record
+
+    def get_crash_analysis(self, crash_id: str) -> CrashAnalysisRecord:
+        self.get_crash(crash_id)
+        with self.session_factory() as session:
+            record = session.get(CrashAnalysisRecord, crash_id)
+            if record is None:
+                raise NotFoundError(f"크래시 분석 결과가 없습니다: {crash_id}")
+            return record
+
+    def list_crashes(
+        self,
+    ) -> Sequence[tuple[CrashArtifactRecord, CrashAnalysisRecord | None]]:
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(CrashArtifactRecord, CrashAnalysisRecord)
+                .outerjoin(
+                    CrashAnalysisRecord,
+                    CrashAnalysisRecord.crash_id == CrashArtifactRecord.id,
+                )
+                .order_by(CrashArtifactRecord.created_at.desc())
+            ).all()
+            return [(artifact, analysis) for artifact, analysis in rows]
+
+    def delete_crash(self, crash_id: str) -> None:
+        with self.session_factory() as session:
+            record = session.get(CrashArtifactRecord, crash_id)
+            if record is None:
+                raise NotFoundError(f"크래시 로그를 찾을 수 없습니다: {crash_id}")
+            session.execute(
+                delete(CrashAnalysisRecord).where(
+                    CrashAnalysisRecord.crash_id == crash_id
+                )
+            )
+            session.delete(record)
+            session.add(
+                AuditLogRecord(
+                    action="crash.deleted",
+                    resource_type="crash_artifact",
+                    resource_id=crash_id,
+                    detail={"filename": record.filename, "size": record.size},
+                )
+            )
+            session.commit()
+
+
+def _safe_filename(filename: str, *, fallback: str) -> str:
+    decoded_name = unquote(filename, errors="replace")
+    name = decoded_name.replace("\\", "/").rsplit("/", 1)[-1].replace("\x00", "")
+    name = "".join(char for char in name if char.isprintable())
+    return name[:255] or fallback

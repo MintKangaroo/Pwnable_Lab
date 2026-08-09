@@ -89,6 +89,21 @@ De Bruijn pattern을 만들고 crash register value 또는 관찰된 byte sequen
 
 교육용 x86/x86-64 syscall byte를 정적 참고용으로 표시한다. 플랫폼이 실행하지 않는다.
 
+## Crash Analyzer
+
+왼쪽 **Crash Analyzer**에서 GDB, pwndbg, GEF 또는 일반 debugger text log를 올린다.
+
+1. 필요하면 **Attach binary**에서 기존 artifact를 선택한다. 이는 관계만 기록한다.
+2. `.log` 또는 `.txt`를 업로드한다. 기본 제한은 UTF-8 2MiB다.
+3. 상단에서 signal, RIP/EIP, RSP/ESP, crash instruction, architecture를 확인한다.
+4. **Registers**에서 관찰값과 runtime mapping 기반 pointer 분류를 구분한다.
+5. **Probable root cause**에서 `possible/likely`, confidence, evidence를 확인한다.
+6. **Stack**과 **Memory maps**에서 return-address/canary 후보의 `inferred` 라벨을 검토한다.
+
+cyclic offset의 byte match는 `verified`지만, 실제 crash input이 같은 alphabet/width였다는
+전제는 별도 constraint다. canary candidate와 probable root cause는 실행 재현 전에는
+확정하지 않는다. core dump binary, live GDB, dynamic execution은 아직 지원하지 않는다.
+
 ## Challenges
 
 결정론적 최소 ELF artifact를 내려받아 같은 정적 도구로 분석한다. 정답은 client bundle에
@@ -121,6 +136,7 @@ curl -s \
 |---|---|---|
 | `UnsupportedFormatError` | 지원 포맷/raw binary가 아님 | 텍스트/압축/아카이브인지 확인 |
 | `PayloadTooLargeError` | 32MiB 기본 제한 초과 | 설정과 원본 크기 확인 |
+| `PayloadTooLargeError` (crash) | 2MiB 로그 제한 초과 | 필요한 register/stack/maps 구간만 남김 |
 | `ParseError` | 손상/절단 ELF 또는 PE 구조 | 원본과 header/table 범위 확인 |
 | `NotFoundError` | artifact/job이 없음 | SHA/삭제 여부 확인 |
 | `AnalysisError` | 분석 범위/지원 architecture 문제 | 요청 count/address와 arch 확인 |

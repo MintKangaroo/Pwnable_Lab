@@ -52,6 +52,25 @@ class AnalysisJobResponse(BaseModel):
     error: str | None
 
 
+class CrashSummary(BaseModel):
+    crash_id: str
+    sha256: str
+    filename: str
+    size: int
+    binary_id: str | None
+    analysis_status: str
+    signal: str | None
+    created_at: datetime
+
+
+class CrashDetail(CrashSummary):
+    analyzer_name: str
+    analyzer_version: str
+    confidence: float
+    evidence: list
+    result: dict
+
+
 # --- 페이로드 도구 ---
 class CyclicRequest(BaseModel):
     length: int = Field(gt=0, le=65_536)

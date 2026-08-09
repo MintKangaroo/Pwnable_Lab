@@ -127,6 +127,31 @@ register write에서 SysV argument 후보를, x86은 최근 `push`에서 stack a
 compiler optimization을 완전히 복원하지 않는다. 따라서 결과는 `possible/inferred`이며
 오탐 요인과 주변 disassembly를 함께 반환한다.
 
+## Text crash-log analyzer
+
+`text_crash_log` analyzer는 사용자가 제공한 UTF-8 GDB/pwndbg/GEF/generic 로그만 읽는다.
+GDB를 호출하거나 연관 바이너리를 실행하지 않는다.
+
+정규화 범위:
+
+- signal, explicit fault address, crash instruction
+- x86/x86-64 general register와 IP/SP/BP
+- GDB `x/` pointer-sized stack value
+- GDB `info proc mappings`와 Linux `/proc/{pid}/maps` 형식
+- executable, stack, heap, libc, loader, mapped file, anonymous mapping
+- register/stack byte의 bounded De Bruijn match와 cyclic offset
+- executable pointer 기반 return-address candidate
+- 64-bit low-NUL/location/mapping 휴리스틱 기반 canary candidate
+
+로그에서 직접 읽은 토큰은 `verified`다. architecture는 register 이름에서,
+pointer classification은 로그의 mapping 범위에서 파생하므로 `inferred`다. canary 후보는
+low byte가 0이라는 단일 조건으로 확정하지 않으며 confidence를 낮게 유지한다. cyclic
+offset이 RIP/EIP에서 일치하면 instruction-pointer overwrite를 `likely/inferred`로 제안하지만
+실행 재현 없이 `confirmed`로 올리지 않는다.
+
+기본 자원 상한은 2MiB, 100,000줄, 줄당 16,384자, 4,096 stack entry다. ANSI escape를
+제거하고 과도한 control character, NUL, archive signature를 거부한다.
+
 ## Fixture policy
 
 테스트는 저장소 내부 C source를 임시 디렉터리에서 컴파일하지만 생성한 ELF를 실행하지

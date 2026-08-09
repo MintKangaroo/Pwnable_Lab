@@ -44,6 +44,10 @@ PwnPilot은 ELF, Windows PE/EXE, raw binary의 구조와 보호 기법, 공격 �
 
 ![PwnPilot ROP Studio](docs/screenshots/14-rop-studio.png)
 
+### Crash Analyzer
+
+![PwnPilot Crash Analyzer](docs/screenshots/15-crash-analyzer.png)
+
 ## 5분 빠른 시작
 
 가장 간단한 방법은 Docker Compose입니다. Docker와 Compose v2만 있으면 됩니다.
@@ -75,8 +79,12 @@ docker compose up --build -d
    모델로 chain layout을 점검합니다.
 6. **Disassembly**, **Symbols**, **Strings**, **GOT/PLT**, **Hex View**로
    필요한 근거를 더 자세히 탐색합니다.
+7. 충돌 로그가 있다면 왼쪽 **Crash Analyzer**에서 GDB/pwndbg/GEF 텍스트를
+   업로드합니다. RIP/RSP, stack, mappings, cyclic offset과 probable root cause가
+   `verified`/`inferred`로 분리되어 표시됩니다.
 
-현재 버전은 업로드한 파일을 **실행하지 않고** 정적 분석만 수행합니다.
+현재 버전은 업로드한 바이너리와 크래시 로그를 **실행하지 않습니다**. Crash Analyzer는
+사용자가 제공한 텍스트만 bounded parsing하며 core dump 실행 분석은 아직 제공하지 않습니다.
 
 ## 지원 포맷
 
@@ -137,6 +145,18 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 - safe-regex/register/category/stack/bad-byte/address filter와 pagination
 - drag/reorder chain layout, inferred stack/register model, pwntools `flat` draft
 
+### Phase 4 text crash-log increment
+
+- GDB, pwndbg, GEF, 일반 UTF-8 크래시 로그의 bounded/non-executing intake
+- signal, fault address, x86/x86-64 registers, current instruction 정규화
+- GDB `x/` stack dump와 `info proc mappings`/`/proc/maps` 파싱
+- stack/heap/libc/loader/executable/anonymous pointer 영역 분류
+- RIP/EIP/stack 값의 bounded De Bruijn 일치와 cyclic offset 근거
+- return-address/canary 후보는 확정값이 아닌 inferred heuristic으로 표시
+- probable root cause는 `possible`/`likely`와 verification/confidence를 분리
+- crash artifact/analysis persistence, audit, reanalysis와 paginated stack/maps API
+- 실제 API 기반 Crash Analyzer workspace와 Playwright 사용자 흐름
+
 ### 재사용된 정적 분석 기능
 
 | 분석 | 현재 내용 |
@@ -152,6 +172,7 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 | Hex | 서버 pagination 기반 512-byte page |
 | Entropy | 전체 파일과 section/raw window별 Shannon entropy; 패킹 확정으로 사용하지 않음 |
 | Payload tools | cyclic, cyclic find, p32/p64, overflow layout |
+| Crash logs | GDB/pwndbg/GEF text, registers, stack/maps, pointer class, cyclic offset |
 | Learning fixtures | 결정론적 교육용 정적 ELF 문제 6종 |
 
 Binary Workspace를 포함한 화면은 [`docs/screenshots/`](docs/screenshots)에 있습니다.
@@ -254,6 +275,13 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
 | `GET` | `/binaries/{binary_id}/hex` | paginated hex |
 | `GET` | `/binaries/{binary_id}/entropy` | 전체/region entropy |
+| `POST` | `/crashes` | UTF-8 텍스트 크래시 로그 업로드와 bounded 분석 |
+| `GET` | `/crashes` | 최근 크래시 로그와 분석 상태 |
+| `GET` | `/crashes/{crash_id}` | signal/register/stack/maps/root-cause 분석 |
+| `POST` | `/crashes/{crash_id}/analyze` | 저장된 텍스트 로그 재분석 |
+| `GET` | `/crashes/{crash_id}/registers` | 관찰된 register 값 |
+| `GET` | `/crashes/{crash_id}/stack` | paginated stack entry와 추론 라벨 |
+| `GET` | `/crashes/{crash_id}/mappings` | paginated process mappings |
 | `POST` | `/payload/cyclic` | cyclic pattern |
 | `POST` | `/payload/cyclic/find` | cyclic offset |
 | `POST` | `/payload/pack` | 정수 packing |
@@ -271,6 +299,16 @@ curl -s \
   "http://localhost:8000/api/v1/binaries/$BINARY_ID/analysis" | jq
 ```
 
+크래시 로그 분석:
+
+```bash
+curl -s -F file=@./gdb-crash.log \
+  http://localhost:8000/api/v1/crashes | jq
+```
+
+바이너리와 연결만 하려면 `-F binary_id="$BINARY_ID"`를 추가합니다. 연결된 바이너리도
+이 요청에서 실행되지 않습니다.
+
 ## 설정
 
 Backend 설정은 `PLAB_` prefix 환경변수로 관리합니다.
@@ -278,7 +316,10 @@ Backend 설정은 `PLAB_` prefix 환경변수로 관리합니다.
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `PLAB_MAX_UPLOAD_BYTES` | `33554432` | 업로드 상한 |
+| `PLAB_MAX_CRASH_LOG_BYTES` | `2097152` | UTF-8 크래시 로그 상한 |
 | `PLAB_UPLOAD_CHUNK_BYTES` | `1048576` | intake read chunk |
+| `PLAB_MAX_CRASH_LOG_LINES` | `100000` | 분석할 최대 로그 줄 수 |
+| `PLAB_MAX_CRASH_STACK_ENTRIES` | `4096` | 보존할 최대 stack 값 수 |
 | `PLAB_STORAGE_DIR` | `./_storage` | content-addressed storage |
 | `PLAB_DATABASE_URL` | `sqlite:///./pwnable_lab.db` | SQLAlchemy URL |
 | `PLAB_AUTO_CREATE_SCHEMA` | `true` | 로컬 편의용 create_all; Compose는 false |
@@ -356,6 +397,8 @@ Pwnable_Lab/
 - PE는 전체 헤더/section 범위를 검증하고, raw는 텍스트/아카이브와 구분합니다.
 - raw architecture, entry point, base address, memory permission은 임의로 추측하지 않습니다.
 - 32MiB 누적 크기와 1MiB read chunk를 서버에서 강제합니다.
+- 텍스트 크래시 로그는 별도 2MiB/100,000줄/4,096 stack-entry 상한을 적용하고 ANSI/control
+  sequence를 정규화합니다.
 - 검증 전 임시 파일은 실패 시 제거하고, 검증 후 SHA-256 이름으로 원자적으로 채택합니다.
 - 위험 함수 결과는 symbol/direct-call heuristic이며 취약점을 확정하지 않습니다.
 - 인증/사용자별 ownership/rate limit이 아직 없으므로 현재 버전을 공개 인터넷에 노출하지
@@ -368,7 +411,8 @@ Pwnable_Lab/
 
 - Phase 2: ELF 정적 분석과 PE/raw format-aware intake 구현 완료; 데이터 흐름 정밀화 지속
 - Phase 3: 함수/CFG/direct xref와 ROP Studio 1차 구현 완료; 간접 분기·고급 gadget 진행
-- Phase 4: core/GDB log/stack/memory/crash 분석
+- Phase 4: 텍스트 GDB/pwndbg/GEF register/stack/maps/cyclic 분석 1차 완료;
+  ELF core note, backtrace, snapshot diff 후속
 - Phase 5: 근거 기반 exploit strategy와 pwntools draft
 - Phase 6A: 비대화형 disposable sandbox
 - Phase 6B: GDB/MI와 WebSocket interactive debugger

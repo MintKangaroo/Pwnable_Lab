@@ -48,9 +48,9 @@ Status Bar
 └── background job summary
 ```
 
-Phase 1에서는 실제 API가 존재하는 Dashboard, Binaries, Payload Studio, Challenges만
-활성화한다. 후속 화면은 라우트와 데이터 계약이 구현된 Phase에서 노출하며 기능 없는
-장식 버튼을 만들지 않는다.
+현재는 실제 API가 존재하는 Dashboard, Binaries, Crash Analyzer, Payload Studio,
+Challenges만 활성화한다. 후속 화면은 라우트와 데이터 계약이 구현된 Phase에서 노출하며
+기능 없는 장식 버튼을 만들지 않는다.
 
 ## 3. 라우트 모델
 
@@ -64,7 +64,7 @@ URL은 공유·새로고침·뒤로 가기가 가능한 Workspace 상태의 sour
 | `/payload` | 정적 payload 도구 | 기존/1 |
 | `/challenges` | 교육용 fixture 문제 | 기존/1 |
 | `/dynamic/:sessionId?` | GDB/MI 동적 분석 | 6B |
-| `/crashes/:crashId?` | core/crash 분석 | 4 |
+| `/crashes/:crashId?` | text crash-log 분석; core는 후속 | 4 |
 | `/rop/:binaryId` | ROP Studio | 3 |
 | `/exploits/:binaryId/:draftId?` | Exploit Studio | 5 |
 | `/techniques/:binaryId` | Technique Intelligence | 5~6C |
@@ -105,7 +105,7 @@ Binary Workspace의 주소·함수·선택 상태는 query string으로 표현�
 - Dynamic session shell
 - Registers/Stack/Memory/Disassembly
 - Timeline/Syscalls/Breakpoints/Logs
-- Crash Analyzer
+- Crash Analyzer text-log workspace 완료; core/snapshot 후속
 
 ### P3 — 전략 도구
 

@@ -79,7 +79,7 @@ IAT address를 검증하지만 call-site data flow를 복원하지 않았으므�
 ## 6. 크래시에서 익스플로잇 전략으로 이동
 
 ```text
-Upload core/log
+Upload text log (core input is a later increment)
   → normalize crash
   → inspect RIP/fault/stack
   → cyclic offset or primitive inference

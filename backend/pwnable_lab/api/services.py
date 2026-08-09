@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 
 from pwnable_lab.analyzer.checksec import run_checksec
 from pwnable_lab.analyzer.control_flow import ControlFlowAnalyzer
+from pwnable_lab.analyzer.crash_log import Limits, analyze_crash_log
 from pwnable_lab.analyzer.disasm import disassemble
 from pwnable_lab.analyzer.entropy import raw_entropy_windows, shannon_entropy
 from pwnable_lab.analyzer.gadgets import (
@@ -71,6 +72,17 @@ class AnalysisService:
             0,
             "unknown",
             ["Bytes passed the raw-binary heuristic; architecture was not inferred"],
+        )
+
+    def crash_log(self, text: str) -> dict:
+        """Analyze bounded debugger text without executing an attached artifact."""
+
+        return analyze_crash_log(
+            text,
+            limits=Limits(
+                max_lines=self.settings.max_crash_log_lines,
+                max_stack_entries=self.settings.max_crash_stack_entries,
+            ),
         )
 
     def image(self, data: bytes) -> ElfImage:

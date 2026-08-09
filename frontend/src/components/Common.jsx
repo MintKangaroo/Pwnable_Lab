@@ -79,6 +79,12 @@ export function Icon({ name, size = 18 }) {
         <path d="M10 10h4v4h-4z" />
       </>
     ),
+    crash: (
+      <>
+        <path d="M3 12h4l2-6 4 12 2-6h6" />
+        <path d="M5 21h14M12 3v2" />
+      </>
+    ),
   };
   return (
     <svg
@@ -152,6 +158,7 @@ const statusMeta = {
   queued: ['◇', 'Queued', 'info'],
   running: ['◐', 'Running', 'info'],
   completed: ['✓', 'Completed', 'success'],
+  partially_completed: ['◐', 'Partial', 'warning'],
   failed: ['×', 'Failed', 'danger'],
 };
 

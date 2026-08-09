@@ -104,6 +104,29 @@ memory operand만 정적으로 해석한다.
 `possible`, `likely`, `confirmed`, `disproven`을 사용한다. 정적 위험 API 탐지는 기본적으로
 `possible`이며 import나 direct call만으로 취약점을 확정하지 않는다.
 
+## Text crash-log endpoints
+
+| Method | Path | 결과 |
+|---|---|---|
+| `POST` | `/crashes` | multipart `file`, optional `binary_id`; 저장 후 bounded text 분석 |
+| `GET` | `/crashes` | 최근 crash artifact와 signal/status |
+| `GET` | `/crashes/{id}` | analyzer provenance와 전체 정규화 결과 |
+| `POST` | `/crashes/{id}/analyze` | 같은 저장 텍스트를 현재 analyzer로 재분석 |
+| `GET` | `/crashes/{id}/registers` | 로그에서 관찰한 register 목록 |
+| `GET` | `/crashes/{id}/stack` | `offset`, `limit` 기반 stack page |
+| `GET` | `/crashes/{id}/mappings` | `offset`, `limit` 기반 mapping page |
+| `DELETE` | `/crashes/{id}` | crash artifact와 analysis 삭제; audit는 유지 |
+
+`POST /crashes`는 UTF-8 text만 받으며 기본 상한은 2MiB다. NUL이 포함된 core/binary와
+ZIP/gzip/bzip2/XZ/RAR archive는 거부한다. 첨부 `binary_id`는 관계만 기록하며 해당
+바이너리를 실행하거나 GDB에 전달하지 않는다.
+
+응답의 register/address 값은 JSON number 외에 exact `value_hex`를 함께 제공한다. 로그에
+직접 존재한 값의 `verification`은 `verified`지만 architecture, pointer mapping,
+return-address/canary label, probable root cause는 `inferred`다. cyclic offset 자체는
+관찰 byte와 bounded pattern의 exact match로 검증되며, 그 패턴이 실제 입력이었다는 조건은
+`constraints`에 남긴다.
+
 ## Errors
 
 오류는 구조화된 `error`와 사용자용 `detail`을 반환한다. malformed ELF는 전체 서버를

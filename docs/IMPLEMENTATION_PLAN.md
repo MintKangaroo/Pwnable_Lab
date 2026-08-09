@@ -263,6 +263,23 @@ Pwnable_Lab/
 - 다중 근거 stack canary 후보
 - 메모리 hex/pointer/string/snapshot diff
 
+1차 구현 상태(2026-08-09):
+
+- 완료: UTF-8 GDB/pwndbg/GEF/generic text log intake와 2MiB bounded read
+- 완료: ANSI/control 정규화, line/stack-entry 상한, archive/core binary 거부
+- 완료: signal, fault address, x86/x86-64 register와 current instruction 파싱
+- 완료: GDB `x/` stack, `info proc mappings`, `/proc/maps` 정규화
+- 완료: runtime mapping 기반 pointer class와 return-address/canary candidate
+- 완료: RIP/EIP/stack De Bruijn match, cyclic offset, probable cause 분리
+- 완료: crash artifact/analysis/audit model, migration, list/detail/reanalysis API
+- 완료: 실제 API 기반 Crash Analyzer UI와 Playwright flow/screenshot
+- 보안 수정: `n=8` cyclic 생성이 전체 주기를 선구성하던 경로를 streaming으로 변경
+- 진행 예정: ELF core note, backtrace, pwndbg/GEF stack format 확대, snapshot diff
+
+이 1차 구현은 업로드한 바이너리를 실행하거나 host GDB를 호출하지 않는다. 로그에 직접
+기록된 값은 `verified`, pointer/root-cause/canary 해석은 `inferred` 또는 `unknown`으로
+보존한다.
+
 ### Phase 5 — 익스플로잇 어시스턴트
 
 - primitive와 mitigation 기반 전략 랭킹

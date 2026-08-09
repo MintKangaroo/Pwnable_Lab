@@ -71,3 +71,38 @@ class SubmissionRecord(Base):
     slug: Mapped[str] = mapped_column(String(64), index=True)
     correct: Mapped[int] = mapped_column(Integer, default=0)  # 0/1
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class CrashArtifactRecord(Base):
+    """A bounded textual debugger log; never an executable artifact."""
+
+    __tablename__ = "crash_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    size: Mapped[int] = mapped_column(Integer)
+    binary_sha256: Mapped[str | None] = mapped_column(
+        ForeignKey("binaries.sha256", ondelete="SET NULL"), nullable=True, index=True
+    )
+    log_text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class CrashAnalysisRecord(Base):
+    __tablename__ = "crash_analyses"
+
+    crash_id: Mapped[str] = mapped_column(
+        ForeignKey("crash_artifacts.id", ondelete="CASCADE"), primary_key=True
+    )
+    analyzer_name: Mapped[str] = mapped_column(String(64))
+    analyzer_version: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(default=0.0)
+    evidence: Mapped[list] = mapped_column(JSON, default=list)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
