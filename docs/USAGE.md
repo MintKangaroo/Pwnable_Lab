@@ -91,18 +91,20 @@ De Bruijn pattern을 만들고 crash register value 또는 관찰된 byte sequen
 
 ## Crash Analyzer
 
-왼쪽 **Crash Analyzer**에서 GDB, pwndbg, GEF 또는 일반 debugger text log를 올린다.
+왼쪽 **Crash Analyzer**에서 GDB, pwndbg, GEF, 일반 debugger text log 또는 Linux
+x86/x86-64 ELF core를 올린다.
 
 1. 필요하면 **Attach binary**에서 기존 artifact를 선택한다. 이는 관계만 기록한다.
-2. `.log` 또는 `.txt`를 업로드한다. 기본 제한은 UTF-8 2MiB다.
+2. `.log`/`.txt`(UTF-8 2MiB) 또는 ELF core(64MiB)를 업로드한다.
 3. 상단에서 signal, RIP/EIP, RSP/ESP, crash instruction, architecture를 확인한다.
 4. **Registers**에서 관찰값과 runtime mapping 기반 pointer 분류를 구분한다.
 5. **Probable root cause**에서 `possible/likely`, confidence, evidence를 확인한다.
-6. **Stack**과 **Memory maps**에서 return-address/canary 후보의 `inferred` 라벨을 검토한다.
+6. **Stack**, **Memory maps**, **Backtrace**에서 return-address/canary 후보와 core의
+   frame-pointer chain `inferred` 라벨을 검토한다.
 
 cyclic offset의 byte match는 `verified`지만, 실제 crash input이 같은 alphabet/width였다는
 전제는 별도 constraint다. canary candidate와 probable root cause는 실행 재현 전에는
-확정하지 않는다. core dump binary, live GDB, dynamic execution은 아직 지원하지 않는다.
+확정하지 않는다. core 파일은 정적으로만 읽으며 live GDB와 dynamic execution은 지원하지 않는다.
 
 ## Challenges
 

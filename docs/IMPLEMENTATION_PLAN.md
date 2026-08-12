@@ -263,10 +263,10 @@ Pwnable_Lab/
 - 다중 근거 stack canary 후보
 - 메모리 hex/pointer/string/snapshot diff
 
-1차 구현 상태(2026-08-09):
+2차 구현 상태(2026-08-12):
 
 - 완료: UTF-8 GDB/pwndbg/GEF/generic text log intake와 2MiB bounded read
-- 완료: ANSI/control 정규화, line/stack-entry 상한, archive/core binary 거부
+- 완료: ANSI/control 정규화, line/stack-entry 상한, archive/임의 binary 거부
 - 완료: signal, fault address, x86/x86-64 register와 current instruction 파싱
 - 완료: GDB `x/` stack, `info proc mappings`, `/proc/maps` 정규화
 - 완료: runtime mapping 기반 pointer class와 return-address/canary candidate
@@ -274,11 +274,15 @@ Pwnable_Lab/
 - 완료: crash artifact/analysis/audit model, migration, list/detail/reanalysis API
 - 완료: 실제 API 기반 Crash Analyzer UI와 Playwright flow/screenshot
 - 보안 수정: `n=8` cyclic 생성이 전체 주기를 선구성하던 경로를 streaming으로 변경
-- 진행 예정: ELF core note, backtrace, pwndbg/GEF stack format 확대, snapshot diff
+- 완료: Linux x86/x86-64 ELF core header/program-header/file-range bounded validation
+- 완료: `NT_PRSTATUS`, `NT_SIGINFO`, `NT_PRPSINFO`, `NT_FILE`, 다중 thread 정규화
+- 완료: PT_LOAD stack/mapping, current instruction, cyclic match와 frame-pointer backtrace
+- 완료: content-addressed core persistence, migration, 재분석과 backtrace API/UI
+- 진행 예정: pwndbg/GEF stack format 확대, 다중 근거 canary, snapshot diff
 
-이 1차 구현은 업로드한 바이너리를 실행하거나 host GDB를 호출하지 않는다. 로그에 직접
-기록된 값은 `verified`, pointer/root-cause/canary 해석은 `inferred` 또는 `unknown`으로
-보존한다.
+이 구현은 업로드한 바이너리/core를 실행하거나 host GDB를 호출하지 않는다. 로그/core에
+직접 기록된 값은 `verified`, pointer/frame/root-cause/canary 해석은 `inferred` 또는
+`unknown`으로 보존한다.
 
 ### Phase 5 — 익스플로잇 어시스턴트
 

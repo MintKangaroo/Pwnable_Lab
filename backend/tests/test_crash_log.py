@@ -104,3 +104,11 @@ def test_oversized_register_and_stack_values_do_not_crash_parser() -> None:
     assert result["instruction_pointer"]["value_hex"] == f"0x{huge}"
     assert result["stack"][0]["ascii"] == "........"
     assert result["probable_overflow_pattern"]["status"] == "unknown"
+
+
+def test_full_width_cyclic_match_wins_over_ambiguous_four_byte_prefix() -> None:
+    value = int.from_bytes(cyclic(160, n=8)[64:72], "little")
+    result = analyze_crash_log(f"rip {value:#x}\nrsp 0x7fffffffe000\n")
+
+    assert result["probable_overflow_pattern"]["offset"] == 64
+    assert result["probable_overflow_pattern"]["pattern_width"] == 8

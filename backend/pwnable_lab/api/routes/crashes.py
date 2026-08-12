@@ -1,8 +1,8 @@
-"""Safe textual crash-log intake and deterministic parsing routes."""
+"""Safe crash-log/core intake and deterministic, non-executing parsing routes."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile, status
 from starlette.concurrency import run_in_threadpool
@@ -30,37 +30,60 @@ _ARCHIVE_MAGIC = (
 
 
 @router.post("", response_model=CrashDetail, status_code=status.HTTP_201_CREATED)
-async def upload_crash_log(
+async def upload_crash_artifact(
     file: UploadFile = File(...),
     binary_id: str | None = Form(default=None),
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
     settings: Settings = Depends(get_config),
 ) -> CrashDetail:
-    filename = file.filename or "crash.log"
+    filename = file.filename or "crash"
     try:
         data = await _read_bounded(file, settings)
-        text = _validate_text_log(data)
-        result = await run_in_threadpool(service.crash_log, text)
-        normalized_text = "\n".join(
-            normalize_crash_log(
-                text,
-                Limits(
-                    max_lines=settings.max_crash_log_lines,
-                    max_stack_entries=settings.max_crash_stack_entries,
-                ),
+        if any(data.startswith(magic) for magic in _ARCHIVE_MAGIC):
+            raise UnsupportedFormatError(
+                "압축 또는 아카이브 파일은 기본적으로 거부됩니다."
             )
-        )
-        if not any(
-            char.isprintable() and not char.isspace() for char in normalized_text
-        ):
-            raise ParseError("ANSI/control 정규화 후 분석 가능한 텍스트가 없습니다.")
-        artifact = await run_in_threadpool(
-            repo.store_crash_log,
-            normalized_text,
-            filename,
-            binary_sha256=binary_id or None,
-        )
+        if data.startswith(b"\x7fELF"):
+            if len(data) > settings.max_core_dump_bytes:
+                raise PayloadTooLargeError(
+                    f"core dump는 {settings.max_core_dump_bytes}바이트를 초과할 수 없습니다."
+                )
+            result = await run_in_threadpool(service.core_dump, data)
+            artifact = await run_in_threadpool(
+                repo.store_core_dump,
+                data,
+                filename,
+                binary_sha256=binary_id or None,
+            )
+        else:
+            if len(data) > settings.max_crash_log_bytes:
+                raise PayloadTooLargeError(
+                    f"크래시 로그는 {settings.max_crash_log_bytes}바이트를 초과할 수 없습니다."
+                )
+            text = _validate_text_log(data)
+            result = await run_in_threadpool(service.crash_log, text)
+            normalized_text = "\n".join(
+                normalize_crash_log(
+                    text,
+                    Limits(
+                        max_lines=settings.max_crash_log_lines,
+                        max_stack_entries=settings.max_crash_stack_entries,
+                    ),
+                )
+            )
+            if not any(
+                char.isprintable() and not char.isspace() for char in normalized_text
+            ):
+                raise ParseError(
+                    "ANSI/control 정규화 후 분석 가능한 텍스트가 없습니다."
+                )
+            artifact = await run_in_threadpool(
+                repo.store_crash_log,
+                normalized_text,
+                filename,
+                binary_sha256=binary_id or None,
+            )
         analysis = await run_in_threadpool(
             repo.save_crash_analysis, artifact.id, result
         )
@@ -90,7 +113,12 @@ def analyze_crash(
     service: AnalysisService = Depends(get_service),
 ) -> CrashDetail:
     artifact = repo.get_crash(crash_id)
-    result = service.crash_log(artifact.log_text)
+    if artifact.artifact_kind == "core_dump":
+        result = service.core_dump(repo.load_crash_bytes(crash_id))
+    else:
+        if artifact.log_text is None:
+            raise ParseError("저장된 크래시 로그 본문이 없습니다.")
+        result = service.crash_log(artifact.log_text)
     return _detail(artifact, repo.save_crash_analysis(crash_id, result))
 
 
@@ -125,6 +153,17 @@ def crash_mappings(
     return _page(items, offset, limit)
 
 
+@router.get("/{crash_id}/backtrace")
+def crash_backtrace(
+    crash_id: str,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=64, ge=1, le=1024),
+    repo: BinaryRepository = Depends(get_repository),
+) -> dict[str, Any]:
+    items = list(repo.get_crash_analysis(crash_id).result.get("backtrace", []))
+    return _page(items, offset, limit)
+
+
 @router.delete("/{crash_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_crash(
     crash_id: str, repo: BinaryRepository = Depends(get_repository)
@@ -140,21 +179,27 @@ async def _read_bounded(file: UploadFile, settings: Settings) -> bytes:
         if not chunk:
             break
         content.extend(chunk)
-        if len(content) > settings.max_crash_log_bytes:
+        if len(content) >= len(b"\x7fELF"):
+            max_bytes = (
+                settings.max_core_dump_bytes
+                if content.startswith(b"\x7fELF")
+                else settings.max_crash_log_bytes
+            )
+        else:
+            max_bytes = max(settings.max_crash_log_bytes, settings.max_core_dump_bytes)
+        if len(content) > max_bytes:
             raise PayloadTooLargeError(
-                f"크래시 로그는 {settings.max_crash_log_bytes}바이트를 초과할 수 없습니다."
+                f"크래시 artifact는 {max_bytes}바이트를 초과할 수 없습니다."
             )
     if not content:
-        raise ParseError("비어 있는 크래시 로그는 분석할 수 없습니다.")
+        raise ParseError("비어 있는 크래시 artifact는 분석할 수 없습니다.")
     return bytes(content)
 
 
 def _validate_text_log(data: bytes) -> str:
-    if any(data.startswith(magic) for magic in _ARCHIVE_MAGIC):
-        raise UnsupportedFormatError("압축 또는 아카이브 파일은 기본적으로 거부됩니다.")
     if b"\x00" in data:
         raise UnsupportedFormatError(
-            "현재 Crash Analyzer는 core dump가 아닌 UTF-8 텍스트 로그만 지원합니다."
+            "Linux ELF core가 아닌 바이너리 크래시 artifact는 지원하지 않습니다."
         )
     try:
         text = data.decode("utf-8-sig")
@@ -177,11 +222,15 @@ def _summary(
 ) -> CrashSummary:
     result = analysis.result if analysis else {}
     signal = result.get("signal", {}).get("value")
+    artifact_kind: Literal["text_log", "core_dump"] = (
+        "core_dump" if artifact.artifact_kind == "core_dump" else "text_log"
+    )
     return CrashSummary(
         crash_id=artifact.id,
         sha256=artifact.sha256,
         filename=artifact.filename,
         size=artifact.size,
+        artifact_kind=artifact_kind,
         binary_id=artifact.binary_sha256,
         analysis_status=analysis.status if analysis else "not_started",
         signal=signal,

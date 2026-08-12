@@ -53,9 +53,9 @@ function CrashIntake({ binaries, pending, onUpload }) {
   return (
     <section className="crash-intake">
       <div>
-        <p className="section-kicker">TEXT LOG INTAKE</p>
-        <h2>Analyze a debugger log</h2>
-        <p>GDB, pwndbg, GEF 또는 일반 크래시 텍스트 · UTF-8 · 최대 2 MiB</p>
+        <p className="section-kicker">CRASH ARTIFACT INTAKE</p>
+        <h2>Analyze a debugger log or ELF core</h2>
+        <p>UTF-8 GDB/pwndbg/GEF 로그 · 2 MiB 또는 Linux x86/x86-64 ELF core · 64 MiB</p>
       </div>
       <label>
         <span>Attach binary (optional)</span>
@@ -85,14 +85,18 @@ function CrashIntake({ binaries, pending, onUpload }) {
       >
         <Icon name="upload" size={18} />
         <span>
-          <strong>{pending ? 'Parsing bounded log…' : 'Upload crash log'}</strong>
-          <small>The target binary is never executed by this workflow.</small>
+          <strong>
+            {pending ? 'Parsing bounded artifact…' : 'Upload crash evidence'}
+          </strong>
+          <small>
+            The core and attached target are never executed by this workflow.
+          </small>
         </span>
         <input
           ref={input}
           hidden
           type="file"
-          accept=".log,.txt,text/plain"
+          accept=".log,.txt,.core,text/plain,application/octet-stream"
           onChange={(event) => {
             accept(event.target.files);
             event.target.value = '';
@@ -105,15 +109,15 @@ function CrashIntake({ binaries, pending, onUpload }) {
 
 function CrashIndex({ items, selected }) {
   return (
-    <aside className="crash-index" aria-label="Crash logs">
+    <aside className="crash-index" aria-label="Crash artifacts">
       <div className="crash-index-head">
-        <span>CAPTURED LOGS</span>
+        <span>CRASH ARTIFACTS</span>
         <b>{String(items.length).padStart(2, '0')}</b>
       </div>
       {items.length === 0 ? (
         <Empty
-          title="No crash logs yet"
-          description="텍스트 디버거 로그를 업로드하면 분석 세션이 여기에 표시됩니다."
+          title="No crash artifacts yet"
+          description="디버거 로그 또는 Linux ELF core를 업로드하면 분석 세션이 여기에 표시됩니다."
         />
       ) : (
         <div className="crash-index-list">
@@ -127,6 +131,7 @@ function CrashIndex({ items, selected }) {
               <span>
                 <strong>{item.filename}</strong>
                 <small>
+                  {item.artifact_kind === 'core_dump' ? 'ELF core' : 'Text log'} ·{' '}
                   {formatBytes(item.size)} ·{' '}
                   {new Date(item.created_at).toLocaleString()}
                 </small>
@@ -189,7 +194,7 @@ function RegisterTable({ registers }) {
     <section className="crash-registers">
       <div className="panel-heading compact-heading">
         <div>
-          <span>VERIFIED LOG VALUES</span>
+          <span>VERIFIED ARTIFACT VALUES</span>
           <h2>Registers</h2>
         </div>
         <span>{registers.length} captured</span>
@@ -197,7 +202,7 @@ function RegisterTable({ registers }) {
       <DataTable
         rows={registers}
         keyFor={(item) => item.name}
-        empty="로그에 register dump가 없습니다. GDB의 info registers 출력을 포함하세요."
+        empty="Register 근거가 없습니다. 텍스트 로그에는 GDB info registers 출력을 포함하세요."
         columns={[
           {
             key: 'name',
@@ -236,7 +241,7 @@ function StackTable({ stack }) {
     <DataTable
       rows={stack}
       keyFor={(item) => item.address_hex}
-      empty="로그에 stack memory dump가 없습니다. x/32gx $rsp 출력을 포함하세요."
+      empty="Stack memory 근거가 없습니다. 텍스트 로그에는 x/32gx $rsp 출력을 포함하세요."
       columns={[
         {
           key: 'offset_from_sp',
@@ -284,7 +289,7 @@ function MappingTable({ mappings }) {
     <DataTable
       rows={mappings}
       keyFor={(item) => `${item.start_hex}-${item.end_hex}`}
-      empty="로그에 process mapping이 없습니다. info proc mappings 출력을 포함하세요."
+      empty="Process mapping 근거가 없습니다. 텍스트 로그에는 info proc mappings 출력을 포함하세요."
       columns={[
         {
           key: 'start_hex',
@@ -313,13 +318,61 @@ function MappingTable({ mappings }) {
   );
 }
 
+function BacktraceTable({ frames }) {
+  return (
+    <DataTable
+      rows={frames}
+      keyFor={(item) => `${item.index}-${item.address_hex}`}
+      empty="ELF core의 frame-pointer chain에서 추론할 backtrace가 없습니다."
+      columns={[
+        {
+          key: 'index',
+          label: 'FRAME',
+          render: (item) => <strong>#{item.index}</strong>,
+        },
+        {
+          key: 'address_hex',
+          label: 'INSTRUCTION',
+          render: (item) => <code>{item.address_hex}</code>,
+        },
+        {
+          key: 'frame_pointer',
+          label: 'FRAME POINTER',
+          render: (item) => <code>{item.frame_pointer || '—'}</code>,
+        },
+        {
+          key: 'verification',
+          label: 'SOURCE',
+          render: (item) => <Verification value={item.verification} />,
+        },
+        {
+          key: 'confidence',
+          label: 'CONFIDENCE',
+          render: (item) => <Confidence value={item.confidence} />,
+        },
+      ]}
+    />
+  );
+}
+
 function CrashWorkspace({ detail }) {
   const [tab, setTab] = useState('stack');
   const result = detail.result;
   const tabItems = {
     stack: result.stack || [],
     mappings: result.mappings || [],
+    backtrace: result.backtrace || [],
   };
+  const sourceLabel =
+    detail.artifact_kind === 'core_dump'
+      ? 'Linux ELF core'
+      : `${result.source?.dialect || 'generic'} text log`;
+  const tabs = [
+    ['stack', `Stack · ${tabItems.stack.length}`],
+    ['mappings', `Memory maps · ${tabItems.mappings.length}`],
+  ];
+  if (detail.artifact_kind === 'core_dump')
+    tabs.push(['backtrace', `Backtrace · ${tabItems.backtrace.length}`]);
   return (
     <div className="crash-workspace">
       <header className="crash-context">
@@ -330,8 +383,7 @@ function CrashWorkspace({ detail }) {
           <span>
             <strong>{detail.filename}</strong>
             <small>
-              {detail.sha256.slice(0, 16)} · {result.source?.dialect || 'generic'} text
-              log
+              {detail.sha256.slice(0, 16)} · {sourceLabel}
             </small>
           </span>
         </div>
@@ -372,10 +424,7 @@ function CrashWorkspace({ detail }) {
 
       <section className="crash-memory-panel">
         <div className="crash-panel-tabs" role="tablist" aria-label="Crash memory data">
-          {[
-            ['stack', `Stack · ${tabItems.stack.length}`],
-            ['mappings', `Memory maps · ${tabItems.mappings.length}`],
-          ].map(([value, label]) => (
+          {tabs.map(([value, label]) => (
             <button
               key={value}
               className={tab === value ? 'active' : ''}
@@ -390,8 +439,10 @@ function CrashWorkspace({ detail }) {
         </div>
         {tab === 'stack' ? (
           <StackTable stack={tabItems.stack} />
-        ) : (
+        ) : tab === 'mappings' ? (
           <MappingTable mappings={tabItems.mappings} />
+        ) : (
+          <BacktraceTable frames={tabItems.backtrace} />
         )}
       </section>
     </div>
@@ -439,10 +490,10 @@ export function CrashAnalyzer({ binaries }) {
       <header className="crash-page-header">
         <div>
           <p className="section-kicker">CRASH ANALYZER · PHASE 4</p>
-          <h1>Turn a crash log into evidence.</h1>
+          <h1>Turn crash artifacts into evidence.</h1>
           <p>
-            레지스터, 스택, 메모리 매핑과 cyclic 오프셋을 정규화하고 관찰값과 추론을
-            분리합니다.
+            텍스트 로그와 ELF core에서 레지스터, 스택, 메모리 매핑, frame chain과 cyclic
+            오프셋을 정규화하고 관찰값과 추론을 분리합니다.
           </p>
         </div>
         {associatedBinary && (
@@ -470,7 +521,7 @@ export function CrashAnalyzer({ binaries }) {
           {!crashId ? (
             <Empty
               title="No crash selected"
-              description="크래시 로그를 업로드하면 register, stack, mapping 근거를 여기서 검토할 수 있습니다."
+              description="크래시 로그 또는 ELF core를 업로드하면 register, stack, mapping 근거를 여기서 검토할 수 있습니다."
             />
           ) : detailQuery.isLoading ? (
             <Loading label="Parsing registers, stack, mappings, and cyclic evidence" />
@@ -479,7 +530,7 @@ export function CrashAnalyzer({ binaries }) {
           ) : (
             <Empty
               title="Crash unavailable"
-              description="로그가 삭제되었거나 분석 결과를 불러오지 못했습니다."
+              description="artifact가 삭제되었거나 분석 결과를 불러오지 못했습니다."
             />
           )}
         </main>

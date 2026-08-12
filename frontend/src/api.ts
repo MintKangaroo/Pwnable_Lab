@@ -156,6 +156,7 @@ export interface CrashSummary {
   sha256: string;
   filename: string;
   size: number;
+  artifact_kind: 'text_log' | 'core_dump';
   binary_id: string | null;
   analysis_status: 'completed' | 'partially_completed' | 'failed' | 'not_started';
   signal: string | null;

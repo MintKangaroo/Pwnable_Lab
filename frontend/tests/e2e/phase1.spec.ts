@@ -209,7 +209,7 @@ test('analyze a text crash log without executing the target', async ({ page }) =
   }
   await page.goto('/crashes');
   await expect(
-    page.getByRole('heading', { name: 'Turn a crash log into evidence.' }),
+    page.getByRole('heading', { name: 'Turn crash artifacts into evidence.' }),
   ).toBeVisible();
 
   const crashLog = `GNU gdb

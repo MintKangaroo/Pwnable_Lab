@@ -79,12 +79,12 @@ docker compose up --build -d
    모델로 chain layout을 점검합니다.
 6. **Disassembly**, **Symbols**, **Strings**, **GOT/PLT**, **Hex View**로
    필요한 근거를 더 자세히 탐색합니다.
-7. 충돌 로그가 있다면 왼쪽 **Crash Analyzer**에서 GDB/pwndbg/GEF 텍스트를
-   업로드합니다. RIP/RSP, stack, mappings, cyclic offset과 probable root cause가
-   `verified`/`inferred`로 분리되어 표시됩니다.
+7. 충돌 근거가 있다면 왼쪽 **Crash Analyzer**에서 GDB/pwndbg/GEF 텍스트 또는 Linux
+   x86/x86-64 ELF core를 업로드합니다. RIP/RSP, stack, mappings, frame chain, cyclic
+   offset과 probable root cause가 `verified`/`inferred`로 분리되어 표시됩니다.
 
-현재 버전은 업로드한 바이너리와 크래시 로그를 **실행하지 않습니다**. Crash Analyzer는
-사용자가 제공한 텍스트만 bounded parsing하며 core dump 실행 분석은 아직 제공하지 않습니다.
+현재 버전은 업로드한 바이너리, 크래시 로그, core dump를 **실행하지 않습니다**. Crash
+Analyzer는 사용자가 제공한 텍스트와 ELF core 구조/메모리 바이트만 bounded parsing합니다.
 
 ## 지원 포맷
 
@@ -145,7 +145,7 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 - safe-regex/register/category/stack/bad-byte/address filter와 pagination
 - drag/reorder chain layout, inferred stack/register model, pwntools `flat` draft
 
-### Phase 4 text crash-log increment
+### Phase 4 crash artifact increment
 
 - GDB, pwndbg, GEF, 일반 UTF-8 크래시 로그의 bounded/non-executing intake
 - signal, fault address, x86/x86-64 registers, current instruction 정규화
@@ -156,6 +156,10 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 - probable root cause는 `possible`/`likely`와 verification/confidence를 분리
 - crash artifact/analysis persistence, audit, reanalysis와 paginated stack/maps API
 - 실제 API 기반 Crash Analyzer workspace와 Playwright 사용자 흐름
+- Linux x86/x86-64 `ET_CORE`, `PT_NOTE`, `PT_LOAD`의 bounded/non-executing intake
+- `NT_PRSTATUS`, `NT_SIGINFO`, `NT_PRPSINFO`, `NT_FILE`과 다중 thread 정규화
+- core memory 기반 instruction decode, stack 값, verified mapping과 inferred frame chain
+- SHA-256 content-addressed core 저장, 재분석, 마지막 참조 삭제 시 파일 정리
 
 ### 재사용된 정적 분석 기능
 
@@ -275,13 +279,14 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
 | `GET` | `/binaries/{binary_id}/hex` | paginated hex |
 | `GET` | `/binaries/{binary_id}/entropy` | 전체/region entropy |
-| `POST` | `/crashes` | UTF-8 텍스트 크래시 로그 업로드와 bounded 분석 |
-| `GET` | `/crashes` | 최근 크래시 로그와 분석 상태 |
-| `GET` | `/crashes/{crash_id}` | signal/register/stack/maps/root-cause 분석 |
-| `POST` | `/crashes/{crash_id}/analyze` | 저장된 텍스트 로그 재분석 |
+| `POST` | `/crashes` | UTF-8 로그 또는 Linux ELF core 업로드와 bounded 분석 |
+| `GET` | `/crashes` | 최근 크래시 artifact와 분석 상태 |
+| `GET` | `/crashes/{crash_id}` | signal/register/stack/maps/backtrace/root-cause 분석 |
+| `POST` | `/crashes/{crash_id}/analyze` | 저장된 로그/core 재분석 |
 | `GET` | `/crashes/{crash_id}/registers` | 관찰된 register 값 |
 | `GET` | `/crashes/{crash_id}/stack` | paginated stack entry와 추론 라벨 |
 | `GET` | `/crashes/{crash_id}/mappings` | paginated process mappings |
+| `GET` | `/crashes/{crash_id}/backtrace` | paginated frame-pointer chain |
 | `POST` | `/payload/cyclic` | cyclic pattern |
 | `POST` | `/payload/cyclic/find` | cyclic offset |
 | `POST` | `/payload/pack` | 정수 packing |
@@ -299,11 +304,12 @@ curl -s \
   "http://localhost:8000/api/v1/binaries/$BINARY_ID/analysis" | jq
 ```
 
-크래시 로그 분석:
+크래시 artifact 분석:
 
 ```bash
 curl -s -F file=@./gdb-crash.log \
   http://localhost:8000/api/v1/crashes | jq
+# 또는: curl -s -F file=@./core http://localhost:8000/api/v1/crashes | jq
 ```
 
 바이너리와 연결만 하려면 `-F binary_id="$BINARY_ID"`를 추가합니다. 연결된 바이너리도
@@ -317,9 +323,12 @@ Backend 설정은 `PLAB_` prefix 환경변수로 관리합니다.
 |---|---|---|
 | `PLAB_MAX_UPLOAD_BYTES` | `33554432` | 업로드 상한 |
 | `PLAB_MAX_CRASH_LOG_BYTES` | `2097152` | UTF-8 크래시 로그 상한 |
+| `PLAB_MAX_CORE_DUMP_BYTES` | `67108864` | Linux ELF core 상한 |
 | `PLAB_UPLOAD_CHUNK_BYTES` | `1048576` | intake read chunk |
 | `PLAB_MAX_CRASH_LOG_LINES` | `100000` | 분석할 최대 로그 줄 수 |
 | `PLAB_MAX_CRASH_STACK_ENTRIES` | `4096` | 보존할 최대 stack 값 수 |
+| `PLAB_MAX_CORE_NOTES` | `4096` | 파싱할 최대 ELF note 수 |
+| `PLAB_MAX_CORE_NOTE_BYTES` | `8388608` | ELF note description별 상한 |
 | `PLAB_STORAGE_DIR` | `./_storage` | content-addressed storage |
 | `PLAB_DATABASE_URL` | `sqlite:///./pwnable_lab.db` | SQLAlchemy URL |
 | `PLAB_AUTO_CREATE_SCHEMA` | `true` | 로컬 편의용 create_all; Compose는 false |
@@ -411,8 +420,8 @@ Pwnable_Lab/
 
 - Phase 2: ELF 정적 분석과 PE/raw format-aware intake 구현 완료; 데이터 흐름 정밀화 지속
 - Phase 3: 함수/CFG/direct xref와 ROP Studio 1차 구현 완료; 간접 분기·고급 gadget 진행
-- Phase 4: 텍스트 GDB/pwndbg/GEF register/stack/maps/cyclic 분석 1차 완료;
-  ELF core note, backtrace, snapshot diff 후속
+- Phase 4: 텍스트 GDB/pwndbg/GEF 및 Linux ELF core register/stack/maps/cyclic 분석,
+  frame-pointer backtrace 1차 완료; snapshot diff 후속
 - Phase 5: 근거 기반 exploit strategy와 pwntools draft
 - Phase 6A: 비대화형 disposable sandbox
 - Phase 6B: GDB/MI와 WebSocket interactive debugger

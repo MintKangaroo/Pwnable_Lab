@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+from io import BytesIO
+
+import pytest
+from fastapi import UploadFile
+
+from pwnable_lab.api.routes.crashes import _read_bounded
+from pwnable_lab.config import Settings
+from pwnable_lab.errors import PayloadTooLargeError
 from pwnable_lab.payload.cyclic import cyclic
+from tests.fixtures import sample_x86_64_core
 
 
 def _log_bytes() -> bytes:
@@ -68,12 +78,10 @@ def test_crash_log_filename_is_sanitized(client) -> None:
 def test_crash_log_rejects_binary_archive_and_empty_input(client) -> None:
     binary = client.post(
         "/api/v1/crashes",
-        files={
-            "file": ("core", b"\x7fELF\x00\x00\x00\x00", "application/octet-stream")
-        },
+        files={"file": ("binary", b"\x00\x01\x02payload", "application/octet-stream")},
     )
     assert binary.status_code == 415
-    assert "UTF-8" in binary.json()["detail"]
+    assert "Linux ELF core" in binary.json()["detail"]
 
     archive = client.post(
         "/api/v1/crashes",
@@ -93,6 +101,33 @@ def test_crash_log_rejects_binary_archive_and_empty_input(client) -> None:
         },
     )
     assert ansi_only.status_code == 422
+
+
+def test_core_dump_lifecycle_backtrace_and_reanalysis(client) -> None:
+    core = sample_x86_64_core()
+    uploaded = client.post(
+        "/api/v1/crashes",
+        files={"file": ("core.4242", core, "application/octet-stream")},
+    )
+    assert uploaded.status_code == 201
+    body = uploaded.json()
+    crash_id = body["crash_id"]
+    assert body["artifact_kind"] == "core_dump"
+    assert body["analyzer_name"] == "linux_elf_core"
+    assert body["result"]["process"]["name"] == "target"
+
+    listing = client.get("/api/v1/crashes").json()
+    assert listing[0]["artifact_kind"] == "core_dump"
+    backtrace = client.get(f"/api/v1/crashes/{crash_id}/backtrace?limit=2").json()
+    assert backtrace["total"] == 3
+    assert len(backtrace["items"]) == 2
+    assert backtrace["items"][1]["verification"] == "inferred"
+
+    rerun = client.post(f"/api/v1/crashes/{crash_id}/analyze")
+    assert rerun.status_code == 200
+    assert rerun.json()["result"]["crash_instruction"]["instruction"] == "ret"
+
+    assert client.delete(f"/api/v1/crashes/{crash_id}").status_code == 204
 
 
 def test_crash_log_rejects_unknown_binary_association(client) -> None:
@@ -120,3 +155,17 @@ def test_deleting_binary_detaches_persisted_crash_log(client) -> None:
     assert client.delete(f"/api/v1/binaries/{binary['binary_id']}").status_code == 204
     detached = client.get(f"/api/v1/crashes/{crash['crash_id']}").json()
     assert detached["binary_id"] is None
+
+
+def test_bounded_reader_applies_text_limit_before_core_limit() -> None:
+    settings = Settings(
+        max_crash_log_bytes=8,
+        max_core_dump_bytes=16,
+        upload_chunk_bytes=4,
+    )
+    text = UploadFile(filename="large.log", file=BytesIO(b"A" * 9))
+    with pytest.raises(PayloadTooLargeError):
+        asyncio.run(_read_bounded(text, settings))
+
+    core = UploadFile(filename="core", file=BytesIO(b"\x7fELF" + b"A" * 8))
+    assert asyncio.run(_read_bounded(core, settings)) == b"\x7fELF" + b"A" * 8

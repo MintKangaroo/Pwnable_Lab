@@ -57,6 +57,7 @@ class CrashSummary(BaseModel):
     sha256: str
     filename: str
     size: int
+    artifact_kind: Literal["text_log", "core_dump"]
     binary_id: str | None
     analysis_status: str
     signal: str | None

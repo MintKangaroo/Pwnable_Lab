@@ -64,7 +64,7 @@ URL은 공유·새로고침·뒤로 가기가 가능한 Workspace 상태의 sour
 | `/payload` | 정적 payload 도구 | 기존/1 |
 | `/challenges` | 교육용 fixture 문제 | 기존/1 |
 | `/dynamic/:sessionId?` | GDB/MI 동적 분석 | 6B |
-| `/crashes/:crashId?` | text crash-log 분석; core는 후속 | 4 |
+| `/crashes/:crashId?` | text crash-log 및 Linux ELF core 분석 | 4 |
 | `/rop/:binaryId` | ROP Studio | 3 |
 | `/exploits/:binaryId/:draftId?` | Exploit Studio | 5 |
 | `/techniques/:binaryId` | Technique Intelligence | 5~6C |
@@ -105,7 +105,7 @@ Binary Workspace의 주소·함수·선택 상태는 query string으로 표현�
 - Dynamic session shell
 - Registers/Stack/Memory/Disassembly
 - Timeline/Syscalls/Breakpoints/Logs
-- Crash Analyzer text-log workspace 완료; core/snapshot 후속
+- Crash Analyzer text-log/ELF-core workspace 완료; snapshot diff 후속
 
 ### P3 — 전략 도구
 

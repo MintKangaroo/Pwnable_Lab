@@ -51,6 +51,9 @@ def test_phase1_migration_upgrades_legacy_sqlite(tmp_path, monkeypatch):
         )
     }
     columns = {row[1] for row in migrated.execute("PRAGMA table_info(binaries)")}
+    crash_columns = {
+        row[1] for row in migrated.execute("PRAGMA table_info(crash_artifacts)")
+    }
     format_value = migrated.execute(
         "SELECT artifact_format FROM binaries LIMIT 1"
     ).fetchone()
@@ -58,4 +61,5 @@ def test_phase1_migration_upgrades_legacy_sqlite(tmp_path, monkeypatch):
 
     assert {"analysis_jobs", "audit_logs", "alembic_version"} <= tables
     assert {"analysis_status", "updated_at", "artifact_format"} <= columns
+    assert {"artifact_kind", "log_text"} <= crash_columns
     assert format_value is not None and format_value[0] == "ELF"

@@ -45,6 +45,7 @@ services:
       PLAB_AUTO_CREATE_SCHEMA: "false"
       PLAB_STORAGE_DIR: /data/binaries
       PLAB_MAX_UPLOAD_BYTES: "33554432"
+      PLAB_MAX_CORE_DUMP_BYTES: "67108864"
       PLAB_CORS_ORIGINS: '["http://localhost:${PWNPILOT_PORT:-8080}"]'
     depends_on:
       postgres:

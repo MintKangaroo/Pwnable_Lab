@@ -17,10 +17,10 @@ FastAPI Control Plane
   │   ├── BinaryRecord
   │   ├── AnalysisJobRecord
   │   └── AuditLogRecord
-  ├── Text crash-log intake
-  │   ├── 2 MiB / line / stack-entry bounds
+  ├── Crash artifact intake
+  │   ├── 2 MiB text / 64 MiB core / note / stack-entry bounds
   │   ├── CrashArtifactRecord + CrashAnalysisRecord
-  │   └── register / stack / maps / cyclic evidence
+  │   └── register / stack / maps / frame-chain / cyclic evidence
   ├── InlineAnalysisJobQueue (development only)
   └── Format-aware static analysis core
       ├── signature/archive policy
@@ -47,7 +47,7 @@ ELF/PE/raw 정적 분석만 의미한다.
 - repository는 DB record와 content-addressed file lifecycle을 담당한다.
 - upload stream 처리는 artifact storage abstraction이 담당한다.
 - 프런트엔드는 `/api/v1` typed client를 통해서만 backend data를 읽는다.
-- text crash-log analyzer는 framework-independent parser이며 target/GDB를 실행하지 않는다.
+- text/core analyzer는 framework-independent parser이며 target/core/GDB를 실행하지 않는다.
 
 기존 `analyzer/`, `elf/`, `payload/`, `challenge/` 모듈은 검증된 정적 분석 코어로
 재사용한다. 목표 구조로의 이동은 기능별 adapter와 회귀 테스트를 추가한 뒤 수행한다.
@@ -127,7 +127,7 @@ inline queue는 요청 안에서 완료되므로 API 응답 시점에는 보통 
 
 - Browser ↔ FastAPI: 신뢰하지 않는 입력
 - FastAPI ↔ parser: 신뢰하지 않는 ELF/PE/raw bytes
-- FastAPI ↔ crash-log parser: 신뢰하지 않는 bounded UTF-8 text
+- FastAPI ↔ crash parser: 신뢰하지 않는 bounded UTF-8 text 또는 Linux ELF core bytes
 - FastAPI ↔ storage: application-owned content-addressed directory
 - FastAPI ↔ DB: parameterized SQLAlchemy operations
 

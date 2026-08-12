@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     # 업로드/저장
     max_upload_bytes: int = Field(default=32 * 1024 * 1024, gt=0)  # 32 MiB
     max_crash_log_bytes: int = Field(default=2 * 1024 * 1024, gt=0)  # 2 MiB
+    max_core_dump_bytes: int = Field(default=64 * 1024 * 1024, gt=0)  # 64 MiB
     upload_chunk_bytes: int = Field(default=1024 * 1024, gt=0, le=4 * 1024 * 1024)
     storage_dir: str = "./_storage"
     database_url: str = "sqlite:///./pwnable_lab.db"
@@ -35,6 +36,8 @@ class Settings(BaseSettings):
     hex_page_size: int = 512
     max_crash_log_lines: int = Field(default=100_000, gt=0, le=1_000_000)
     max_crash_stack_entries: int = Field(default=4096, gt=0, le=100_000)
+    max_core_notes: int = Field(default=4096, gt=0, le=100_000)
+    max_core_note_bytes: int = Field(default=8 * 1024 * 1024, gt=0, le=64 * 1024 * 1024)
 
     # 페이로드 도구 한계
     max_cyclic_length: int = 65536

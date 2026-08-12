@@ -72,3 +72,29 @@ def test_submission_stats(repository):
     repository.record_submission("ret2win", True)
     repository.record_submission("other", True)
     assert repository.stats("ret2win") == {"attempts": 2, "solved": 1}
+
+
+def test_core_dump_storage_is_content_addressed_and_removed_with_last_record(
+    repository,
+):
+    core = b"\x7fELF-core-fixture"
+    first = repository.store_core_dump(core, r"..\captures/core.1")
+    second = repository.store_core_dump(core, "core.2")
+    path = repository.crash_storage.path_for(first.sha256)
+
+    assert first.artifact_kind == "core_dump"
+    assert first.log_text is None
+    assert first.filename == "core.1"
+    assert repository.load_crash_bytes(first.id) == core
+    assert path.is_file()
+
+    repository.delete_crash(first.id)
+    assert path.is_file()
+    repository.delete_crash(second.id)
+    assert not path.exists()
+
+
+def test_text_log_cannot_be_loaded_as_core_bytes(repository):
+    artifact = repository.store_crash_log("rip 0x401000", "session.log")
+    with pytest.raises(NotFoundError):
+        repository.load_crash_bytes(artifact.id)

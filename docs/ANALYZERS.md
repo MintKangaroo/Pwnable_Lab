@@ -152,6 +152,30 @@ offset이 RIP/EIP에서 일치하면 instruction-pointer overwrite를 `likely/in
 기본 자원 상한은 2MiB, 100,000줄, 줄당 16,384자, 4,096 stack entry다. ANSI escape를
 제거하고 과도한 control character, NUL, archive signature를 거부한다.
 
+## Linux ELF core analyzer
+
+`linux_elf_core` analyzer는 최대 64MiB의 Linux x86/x86-64 `ET_CORE` 파일을 실행하지 않고
+직접 읽는다. ELF class/machine, program-header file range, note alignment/크기, PT_LOAD
+file range를 먼저 검증하고 다음 근거를 정규화한다.
+
+- `NT_PRSTATUS`: thread ID와 x86/x86-64 general registers
+- `NT_SIGINFO`: signal/code와 fault address
+- `NT_PRPSINFO`: bounded process name/arguments
+- `NT_FILE`: mapped path와 file offset
+- `PT_LOAD`: 실제 캡처된 memory bytes와 permissions
+- IP의 Capstone instruction decode, SP 기준 pointer-sized stack 값
+- monotonic/aligned frame-pointer chain의 inferred backtrace
+- register/stack byte의 bounded n=4/n=8 De Bruijn match
+
+note/register/memory에 직접 기록된 값과 instruction bytes는 `verified`다. pointer region,
+return-address/canary 후보, frame-pointer backtrace, probable root cause는 캡처 근거에서
+파생되므로 `inferred` 또는 `unknown`을 유지한다. 별도 module/symbol 분석 없이 함수명을
+추측하지 않으며 optimized/corrupted frame의 backtrace 완전성을 보장하지 않는다.
+
+기본 상한은 core 64MiB, program header/note 각 4,096개, note description별 8MiB,
+NT_FILE mapping 8,192개, stack entry 4,096개, backtrace 64 frame이다. extended program-header
+count, non-x86 machine, big-endian x86 조합은 현재 지원하지 않는다.
+
 ## Fixture policy
 
 테스트는 저장소 내부 C source를 임시 디렉터리에서 컴파일하지만 생성한 ELF를 실행하지

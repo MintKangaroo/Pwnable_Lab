@@ -37,6 +37,9 @@ class BinaryRepository:
 
     def __post_init__(self) -> None:
         self.storage = ArtifactStorage.from_path(self.storage_dir)
+        self.crash_storage = ArtifactStorage.from_path(
+            os.path.join(self.storage_dir, "crash-artifacts")
+        )
 
     # --- 바이너리 ---
     def _path(self, sha256: str) -> str:
@@ -267,7 +270,7 @@ class BinaryRepository:
         solved = sum(r.correct for r in rows)
         return {"attempts": total, "solved": solved}
 
-    # --- 텍스트 크래시 로그 ---
+    # --- 크래시 로그와 ELF core ---
     def store_crash_log(
         self, text: str, filename: str, *, binary_sha256: str | None = None
     ) -> CrashArtifactRecord:
@@ -285,6 +288,7 @@ class BinaryRepository:
                 sha256=digest,
                 filename=safe_name,
                 size=len(encoded),
+                artifact_kind="text_log",
                 binary_sha256=binary_sha256,
                 log_text=text,
             )
@@ -305,6 +309,58 @@ class BinaryRepository:
             session.commit()
             session.refresh(record)
             return record
+
+    def store_core_dump(
+        self, data: bytes, filename: str, *, binary_sha256: str | None = None
+    ) -> CrashArtifactRecord:
+        staged = self.crash_storage.stage_bytes(data)
+        safe_name = _safe_filename(filename, fallback="core")
+        try:
+            with self.session_factory() as session:
+                if (
+                    binary_sha256 is not None
+                    and session.get(BinaryRecord, binary_sha256) is None
+                ):
+                    raise NotFoundError(f"바이너리를 찾을 수 없습니다: {binary_sha256}")
+                self.crash_storage.commit(staged)
+                record = CrashArtifactRecord(
+                    id=str(uuid.uuid4()),
+                    sha256=staged.sha256,
+                    filename=safe_name,
+                    size=staged.size,
+                    artifact_kind="core_dump",
+                    binary_sha256=binary_sha256,
+                    log_text=None,
+                )
+                session.add(record)
+                session.add(
+                    AuditLogRecord(
+                        action="crash.uploaded",
+                        resource_type="crash_artifact",
+                        resource_id=record.id,
+                        detail={
+                            "sha256": staged.sha256,
+                            "size": staged.size,
+                            "binary_sha256": binary_sha256,
+                            "kind": "core_dump",
+                        },
+                    )
+                )
+                session.commit()
+                session.refresh(record)
+                return record
+        except BaseException:
+            self.crash_storage.discard(staged)
+            raise
+
+    def load_crash_bytes(self, crash_id: str) -> bytes:
+        artifact = self.get_crash(crash_id)
+        if artifact.artifact_kind != "core_dump":
+            raise NotFoundError(f"core dump artifact가 아닙니다: {crash_id}")
+        path = self.crash_storage.path_for(artifact.sha256)
+        if not path.is_file():
+            raise NotFoundError(f"core dump 파일을 찾을 수 없습니다: {crash_id}")
+        return path.read_bytes()
 
     def save_crash_analysis(self, crash_id: str, result: dict) -> CrashAnalysisRecord:
         now = datetime.now(timezone.utc)
@@ -379,10 +435,24 @@ class BinaryRepository:
             return [(artifact, analysis) for artifact, analysis in rows]
 
     def delete_crash(self, crash_id: str) -> None:
+        core_path = None
+        remove_core_file = False
         with self.session_factory() as session:
             record = session.get(CrashArtifactRecord, crash_id)
             if record is None:
                 raise NotFoundError(f"크래시 로그를 찾을 수 없습니다: {crash_id}")
+            if record.artifact_kind == "core_dump":
+                core_path = self.crash_storage.path_for(record.sha256)
+                sibling = session.scalar(
+                    select(CrashArtifactRecord.id)
+                    .where(
+                        CrashArtifactRecord.artifact_kind == "core_dump",
+                        CrashArtifactRecord.sha256 == record.sha256,
+                        CrashArtifactRecord.id != crash_id,
+                    )
+                    .limit(1)
+                )
+                remove_core_file = sibling is None
             session.execute(
                 delete(CrashAnalysisRecord).where(
                     CrashAnalysisRecord.crash_id == crash_id
@@ -398,6 +468,8 @@ class BinaryRepository:
                 )
             )
             session.commit()
+        if remove_core_file and core_path is not None:
+            core_path.unlink(missing_ok=True)
 
 
 def _safe_filename(filename: str, *, fallback: str) -> str:

@@ -74,7 +74,7 @@ class SubmissionRecord(Base):
 
 
 class CrashArtifactRecord(Base):
-    """A bounded textual debugger log; never an executable artifact."""
+    """A bounded debugger log or Linux ELF core; never executed by PwnPilot."""
 
     __tablename__ = "crash_artifacts"
 
@@ -82,10 +82,11 @@ class CrashArtifactRecord(Base):
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     filename: Mapped[str] = mapped_column(String(255))
     size: Mapped[int] = mapped_column(Integer)
+    artifact_kind: Mapped[str] = mapped_column(String(16), default="text_log")
     binary_sha256: Mapped[str | None] = mapped_column(
         ForeignKey("binaries.sha256", ondelete="SET NULL"), nullable=True, index=True
     )
-    log_text: Mapped[str] = mapped_column(Text)
+    log_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 

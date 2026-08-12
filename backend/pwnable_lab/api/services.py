@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 
 from pwnable_lab.analyzer.checksec import run_checksec
 from pwnable_lab.analyzer.control_flow import ControlFlowAnalyzer
+from pwnable_lab.analyzer.core_dump import CoreLimits, analyze_core_dump
 from pwnable_lab.analyzer.crash_log import Limits, analyze_crash_log
 from pwnable_lab.analyzer.disasm import disassemble
 from pwnable_lab.analyzer.entropy import raw_entropy_windows, shannon_entropy
@@ -81,6 +82,18 @@ class AnalysisService:
             text,
             limits=Limits(
                 max_lines=self.settings.max_crash_log_lines,
+                max_stack_entries=self.settings.max_crash_stack_entries,
+            ),
+        )
+
+    def core_dump(self, data: bytes) -> dict:
+        """Parse a bounded Linux ELF core without loading or executing its target."""
+
+        return analyze_core_dump(
+            data,
+            limits=CoreLimits(
+                max_notes=self.settings.max_core_notes,
+                max_note_bytes=self.settings.max_core_note_bytes,
                 max_stack_entries=self.settings.max_crash_stack_entries,
             ),
         )

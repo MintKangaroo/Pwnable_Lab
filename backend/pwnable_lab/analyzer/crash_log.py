@@ -410,9 +410,8 @@ def _find_probable_cyclic(
         candidates.append((f"stack:{entry['address_hex']}", entry["value"]))
 
     width = 4 if bits == 32 else 8
-    patterns = [(4, cyclic(65_536, n=4))]
-    if width >= 8:
-        patterns.append((8, cyclic(65_536, n=8)))
+    patterns = [(8, cyclic(65_536, n=8))] if width >= 8 else []
+    patterns.append((4, cyclic(65_536, n=4)))
     for source, value in candidates:
         masked = value & ((1 << (width * 8)) - 1)
         raw = masked.to_bytes(width, "little", signed=False)
