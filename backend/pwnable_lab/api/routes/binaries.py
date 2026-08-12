@@ -207,6 +207,27 @@ def binary_vulns(
     return service.vulns(repo.load_bytes(sha256))
 
 
+@router.get("/{sha256}/strategy")
+def binary_strategy(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """근거 기반 exploit 후보 경로와 pwntools 스켈레톤 초안."""
+    return service.exploit_strategy(repo.load_bytes(sha256))
+
+
+@router.get("/{sha256}/functions/{address}/pseudocode")
+def binary_function_pseudocode(
+    sha256: str,
+    address: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """단일 함수의 규칙 기반 pseudo-C 초안(휴리스틱)."""
+    return service.pseudo_c(repo.load_bytes(sha256), address=_parse_address(address))
+
+
 @router.get("/{sha256}/gadgets")
 def binary_gadgets(
     sha256: str,

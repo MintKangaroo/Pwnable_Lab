@@ -151,6 +151,65 @@ export interface RopChainItem {
   label?: string;
 }
 
+export interface PseudoCodeResult {
+  format: string;
+  name: string;
+  address: number;
+  end: number;
+  signature: string;
+  frame_size: number;
+  pseudocode: string;
+  line_count: number;
+  verification: 'inferred';
+  confidence: number;
+  truncated: boolean;
+  notes: string[];
+  disassembly_verification: 'verified';
+}
+
+export interface StrategyPrimitive {
+  key: string;
+  label: string;
+  present: boolean;
+  detail: string;
+  evidence: string[];
+}
+
+export interface StrategyPrecondition {
+  label: string;
+  met: boolean;
+  detail: string;
+}
+
+export interface StrategyPath {
+  id: string;
+  title: string;
+  korean_title: string;
+  status: 'recommended' | 'possible' | 'blocked';
+  confidence: number;
+  summary: string;
+  preconditions: StrategyPrecondition[];
+  steps: string[];
+  evidence: string[];
+  blockers: string[];
+  pwntools: string;
+}
+
+export interface StrategyResult {
+  format: 'ELF';
+  machine: string;
+  bits: number;
+  position_independent: boolean;
+  protections: Record<string, unknown>;
+  primitives: StrategyPrimitive[];
+  paths: StrategyPath[];
+  recommended_path_id: string | null;
+  verification: 'inferred';
+  confidence: number;
+  disclaimer: string;
+  limitations: string[];
+}
+
 export interface CrashSummary {
   crash_id: string;
   sha256: string;
@@ -261,6 +320,9 @@ export const api = {
     ),
   functionDetail: (sha: string, address: number | string) =>
     request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}`),
+  pseudocode: (sha: string, address: number | string) =>
+    request<PseudoCodeResult>(`/binaries/${sha}/functions/${address}/pseudocode`),
+  strategy: (sha: string) => request<StrategyResult>(`/binaries/${sha}/strategy`),
   cfg: (sha: string, address: number | string) =>
     request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}/cfg`),
   xrefs: (

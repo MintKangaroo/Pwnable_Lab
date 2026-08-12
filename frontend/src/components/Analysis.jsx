@@ -30,6 +30,7 @@ const tabsForFormat = (format) => {
       COMMON_TABS[2],
       COMMON_TABS[3],
       ['got', 'GOT / PLT'],
+      ['strategy', 'Exploit Strategy'],
       COMMON_TABS[4],
     ];
   }
@@ -347,6 +348,8 @@ function FunctionsView({ sha, selectedAddress, onAddressChange }) {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [catalog, setCatalog] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [pseudo, setPseudo] = useState(null);
+  const [pseudoError, setPseudoError] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -370,11 +373,25 @@ function FunctionsView({ sha, selectedAddress, onAddressChange }) {
       return;
     }
     setDetail(null);
+    setPseudo(null);
+    setPseudoError('');
     api
       .functionDetail(sha, activeAddress)
       .then(setDetail)
       .catch((reason) => setError(reason.message));
   }, [sha, activeAddress]);
+
+  const loadPseudocode = () => {
+    setPseudoError('');
+    setPseudo('loading');
+    api
+      .pseudocode(sha, addressParam(activeAddress))
+      .then(setPseudo)
+      .catch((reason) => {
+        setPseudo(null);
+        setPseudoError(reason.message);
+      });
+  };
 
   return (
     <div className="function-workspace">
@@ -514,6 +531,37 @@ function FunctionsView({ sha, selectedAddress, onAddressChange }) {
               {detail.evidence.map((item) => (
                 <p key={item}>✓ {item}</p>
               ))}
+            </div>
+            <div className="pseudo-c-block">
+              <div className="pseudo-c-head">
+                <strong>PSEUDO-C</strong>
+                <span className="verification verification-inferred">
+                  ~ inferred (휴리스틱)
+                </span>
+              </div>
+              {pseudoError && <ErrorBanner message={pseudoError} />}
+              {pseudo === null && (
+                <button className="button secondary" onClick={loadPseudocode}>
+                  C 의사코드로 보기
+                </button>
+              )}
+              {pseudo === 'loading' && <Loading label="의사코드를 생성하는 중" />}
+              {pseudo && pseudo !== 'loading' && (
+                <>
+                  <div className="pseudo-c-toolbar">
+                    <code>{pseudo.signature}</code>
+                    <CopyButton value={pseudo.pseudocode} />
+                  </div>
+                  <pre className="pseudo-c-code">
+                    <code>{pseudo.pseudocode}</code>
+                  </pre>
+                  <div className="pseudo-c-notes">
+                    {pseudo.notes.map((note) => (
+                      <p key={note}>· {note}</p>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </>
         )}
@@ -1681,6 +1729,170 @@ function HexView({ sha }) {
   );
 }
 
+const strategyStatusTone = {
+  recommended: 'success',
+  possible: 'warn',
+  blocked: 'danger',
+};
+
+const strategyStatusLabel = {
+  recommended: '추천 루트',
+  possible: '가능',
+  blocked: '차단됨',
+};
+
+function Strategy({ sha }) {
+  const [report, setReport] = useState(null);
+  const [error, setError] = useState('');
+  const [openPath, setOpenPath] = useState('');
+
+  useEffect(() => {
+    setReport(null);
+    setError('');
+    api
+      .strategy(sha)
+      .then((data) => {
+        setReport(data);
+        setOpenPath(data.recommended_path_id || data.paths?.[0]?.id || '');
+      })
+      .catch((reason) => setError(reason.message));
+  }, [sha]);
+
+  if (error) return <ErrorBanner message={error} />;
+  if (!report) return <Loading label="공격 표면 근거를 종합하는 중" />;
+
+  return (
+    <div className="strategy-workspace">
+      <section className="strategy-intro">
+        <div className="section-heading">
+          <h3>Exploit Strategy</h3>
+          <span className="verification verification-inferred">
+            ~ inferred · confidence {Math.round(report.confidence * 100)}%
+          </span>
+        </div>
+        <p className="strategy-disclaimer">{report.disclaimer}</p>
+      </section>
+
+      <section className="strategy-primitives">
+        <div className="section-heading">
+          <h3>공격 재료 (Primitives)</h3>
+          <span>어떤 1차 재료가 있는지가 루트를 결정합니다</span>
+        </div>
+        <div className="primitive-grid">
+          {report.primitives.map((primitive) => (
+            <div
+              key={primitive.key}
+              className={`primitive-card ${primitive.present ? 'present' : 'absent'}`}
+            >
+              <div className="primitive-head">
+                <span>{primitive.present ? '✓' : '×'}</span>
+                <strong>{primitive.label}</strong>
+              </div>
+              <p>{primitive.detail}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="strategy-paths">
+        <div className="section-heading">
+          <h3>후보 루트</h3>
+          <span>{report.paths.length}개 경로 · 근거순 정렬</span>
+        </div>
+        {report.paths.map((path) => {
+          const open = openPath === path.id;
+          return (
+            <div
+              key={path.id}
+              className={`path-card ${path.id === report.recommended_path_id ? 'recommended' : ''}`}
+            >
+              <button
+                className="path-card-head"
+                onClick={() => setOpenPath(open ? '' : path.id)}
+              >
+                <div className="path-title">
+                  <Badge tone={strategyStatusTone[path.status] || 'cyan'}>
+                    {strategyStatusLabel[path.status] || path.status}
+                  </Badge>
+                  <strong>{path.korean_title}</strong>
+                </div>
+                <div className="path-meta">
+                  <span>{Math.round(path.confidence * 100)}%</span>
+                  <span>{open ? '▲' : '▼'}</span>
+                </div>
+              </button>
+              {open && (
+                <div className="path-body">
+                  <p className="path-summary">{path.summary}</p>
+                  <code className="path-en-title">{path.title}</code>
+
+                  {path.preconditions.length > 0 && (
+                    <div className="path-section">
+                      <strong>선행 조건</strong>
+                      <ul className="precondition-list">
+                        {path.preconditions.map((pre) => (
+                          <li key={pre.label} className={pre.met ? 'met' : 'unmet'}>
+                            <span>{pre.met ? '✓' : '×'}</span> {pre.label}
+                            <em> — {pre.detail}</em>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="path-section">
+                    <strong>진행 순서</strong>
+                    <ol className="steps-list">
+                      {path.steps.map((step, index) => (
+                        <li key={index}>{step}</li>
+                      ))}
+                    </ol>
+                  </div>
+
+                  {path.blockers.length > 0 && (
+                    <div className="path-section path-blockers">
+                      <strong>차단 요인</strong>
+                      {path.blockers.map((blocker) => (
+                        <p key={blocker}>⚠ {blocker}</p>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="path-section">
+                    <div className="pseudo-c-toolbar">
+                      <strong>pwntools 스켈레톤 (초안)</strong>
+                      <CopyButton value={path.pwntools} />
+                    </div>
+                    <pre className="pseudo-c-code">
+                      <code>{path.pwntools}</code>
+                    </pre>
+                  </div>
+
+                  {path.evidence.length > 0 && (
+                    <div className="path-section evidence-compact">
+                      <strong>근거</strong>
+                      {path.evidence.map((item) => (
+                        <p key={item}>✓ {item}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      <section className="strategy-limitations">
+        <strong>한계</strong>
+        {report.limitations.map((item) => (
+          <p key={item}>· {item}</p>
+        ))}
+      </section>
+    </div>
+  );
+}
+
 /**
  * @param {{
  *   sha: string,
@@ -1835,6 +2047,7 @@ export function Analysis({
             />
           )}
           {tab === 'gadgets' && <Gadgets sha={sha} onAddressChange={onAddressChange} />}
+          {tab === 'strategy' && <Strategy sha={sha} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}
           {tab === 'got' && <GotPlt sha={sha} />}

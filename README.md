@@ -161,6 +161,17 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 - core memory 기반 instruction decode, stack 값, verified mapping과 inferred frame chain
 - SHA-256 content-addressed core 저장, 재분석, 마지막 참조 삭제 시 파일 정리
 
+### Phase 5 exploit strategy 1차
+
+- checksec, 위험 API 스캔, win/셸 함수 심볼, 문자열, GOT/PLT, ROP gadget 근거를 종합한
+  후보 공격 경로(ret2win, ret2system, format-string, ret2shellcode, ROP chain)
+- 경로별 선행 조건(충족 여부), 진행 순서, 차단 요인, 근거와 confidence를 분리 제시
+- win 함수 주소, `/bin/sh` 문자열, `pop rdi ; ret` gadget, `[rbp-N]` 버퍼에서 오프셋을
+  추정해 채운 pwntools 스켈레톤 초안 (오프셋/주소는 사용자 검증 필요)
+- 함수 단위 규칙 기반 pseudo-C 초안: 호출·인자, 문자열 리터럴, `if/goto`, 반환, 프레임
+  크기를 근사 (진짜 디컴파일러가 아니며 결과는 inferred)
+- 모든 결과는 취약점을 확정하지 않고 정적 근거만 사용하며 바이너리를 실행하지 않음
+
 ### 재사용된 정적 분석 기능
 
 | 분석 | 현재 내용 |
@@ -171,6 +182,8 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
 | Disassembly | Capstone 기반 x86/x86-64 선형 디스어셈블 |
 | Functions / CFG | 근거 기반 함수 경계, 기본 블록, direct edge와 xref |
 | ROP | exact decode gadget metadata, semantic filter, inferred chain layout model |
+| Exploit strategy | checksec·위험 API·win 함수·문자열·gadget 근거를 종합한 후보 공격 경로와 pwntools 초안 (모두 inferred) |
+| Pseudo-C | 단일 함수 디스어셈블의 규칙 기반 C 유사 의사코드 (휴리스틱, 진짜 디컴파일 아님) |
 | Strings | ASCII, UTF-16LE |
 | GOT/PLT | verified relocation target과 inferred PLT stub |
 | Hex | 서버 pagination 기반 512-byte page |
@@ -275,6 +288,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/vulns` | 위험 symbol/direct-call 후보 |
 | `GET` | `/binaries/{binary_id}/gadgets` | paginated ROP gadget metadata와 필터 |
 | `POST` | `/binaries/{binary_id}/rop/simulate` | 제한된 정적 chain layout 모델 |
+| `GET` | `/binaries/{binary_id}/strategy` | 근거 기반 후보 exploit 경로와 pwntools 초안 (ELF 전용) |
+| `GET` | `/binaries/{binary_id}/functions/{address}/pseudocode` | 함수 규칙 기반 pseudo-C 초안 |
 | `GET` | `/binaries/{binary_id}/strings` | 문자열 |
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
 | `GET` | `/binaries/{binary_id}/hex` | paginated hex |
@@ -422,8 +437,11 @@ Pwnable_Lab/
 - Phase 3: 함수/CFG/direct xref와 ROP Studio 1차 구현 완료; 간접 분기·고급 gadget 진행
 - Phase 4: 텍스트 GDB/pwndbg/GEF 및 Linux ELF core register/stack/maps/cyclic 분석,
   frame-pointer backtrace 1차 완료; snapshot diff 후속
-- Phase 5: 근거 기반 exploit strategy와 pwntools draft
-- Phase 6A: 비대화형 disposable sandbox
+- Phase 5: 근거 기반 exploit strategy와 pwntools draft, 규칙 기반 pseudo-C 1차 구현 완료;
+  libc leak/ASLR 흐름과 자동 오프셋 정밀화는 후속
+- Phase 6A: **비대화형 disposable sandbox 기반 자동 exploit 실행** — 업로드 바이너리를
+  network-disabled sandbox 에서 구동해 오프셋을 자동 확정하고 Phase 5 전략을 실제로
+  실행/검증하는 다음 우선 목표. 설계 노트: [`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md)
 - Phase 6B: GDB/MI와 WebSocket interactive debugger
 - Phase 6C: packing/UPX/obfuscation/runtime strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance

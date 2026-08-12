@@ -9,6 +9,7 @@ from pwnable_lab.analyzer.checksec import run_checksec
 from pwnable_lab.analyzer.control_flow import ControlFlowAnalyzer
 from pwnable_lab.analyzer.core_dump import CoreLimits, analyze_core_dump
 from pwnable_lab.analyzer.crash_log import Limits, analyze_crash_log
+from pwnable_lab.analyzer.decompile import decompile_function
 from pwnable_lab.analyzer.disasm import disassemble
 from pwnable_lab.analyzer.entropy import raw_entropy_windows, shannon_entropy
 from pwnable_lab.analyzer.gadgets import (
@@ -18,6 +19,7 @@ from pwnable_lab.analyzer.gadgets import (
     simulate_chain,
 )
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
+from pwnable_lab.analyzer.strategy import analyze_strategy
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
@@ -248,6 +250,26 @@ class AnalysisService:
                 max_instructions=self.settings.max_disasm_instructions,
             )
         ]
+
+    def exploit_strategy(self, data: bytes) -> dict:
+        """checksec/vulns/함수/gadget 근거를 종합한 후보 exploit 경로."""
+
+        self._require_format(data, ArtifactFormat.ELF, feature="Exploit strategy")
+        return analyze_strategy(
+            parse_elf(data),
+            max_instructions=self.settings.max_disasm_instructions,
+        )
+
+    def pseudo_c(self, data: bytes, *, address: int) -> dict:
+        """단일 함수의 규칙 기반 pseudo-C 초안."""
+
+        analyzer = self._control_flow(data)
+        detail = analyzer.function_detail(
+            address,
+            max_instructions=self.settings.max_disasm_instructions,
+        )
+        names = {addr: names[0] for addr, names in analyzer.symbols.items() if names}
+        return decompile_function(detail, bits=analyzer.bits, names=names)
 
     def gadgets(
         self,
