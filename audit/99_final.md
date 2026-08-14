@@ -6,6 +6,12 @@
 
 ---
 
+## 0. 수정 반영 상태 (2026-08-14, 본 감사 후속)
+
+- **[F-CRIT-1] 수정됨.** `strategy.py` `_infer_offset` 가 간접 버퍼 로드(`lea reg,[rbp-N]; mov rdi,reg`)에서도 오프셋을 산출하도록 `_buffer_rbp_disp` 헬퍼 추가(레지스터별 `lea` 탐색). 실 gcc 바이너리에서 `offset = 72` 확정 확인. 회귀 테스트 `tests/test_strategy_offset_real.py`. (rsp-상대 -O2 케이스는 프레임포인터 부재로 정적 추론 불가 → 정직한 placeholder 유지, Phase 6A 동적 러너가 커버.)
+- **[F-CRIT-2] 수정됨.** `gadgets.py` 에 `_indirect_terminals` 추가 + `_is_terminal` 이 간접 `jmp/call reg`·`[mem]`(JOP/COP)을 종단으로 인정. ROPgadget 대조: `jmp rax` 주소 완전 일치, `call rax` 48/50(나머지 2개는 동일 주소의 ret 종단 가젯이 선점, 부분문자열 검색으로 여전히 발견) + 오탐 0. 회귀 테스트 `tests/test_gadgets_jop.py`.
+- 아래 원 진단은 감사 시점 기록으로 보존한다.
+
 ## 1. 오답 유발 결함 (믿고 값을 넣으면 익스가 안 터지는 케이스)
 
 ### [F-CRIT-1] strategy 오프셋 미산출 → `offset = 0` (HIGH). CONFIRMED.
