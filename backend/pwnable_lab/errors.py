@@ -37,3 +37,12 @@ class ChallengeError(PwnableLabError):
 
 class ToolUnavailableError(PwnableLabError):
     """외부 도구(예: ROPgadget, one_gadget)를 사용할 수 없음."""
+
+
+class SandboxError(PwnableLabError):
+    """샌드박스 실행(Phase 6A auto-exploit) 관련 오류.
+
+    플랫폼 미지원, ptrace 실패, 실행 준비 오류 등 오프셋 확정 러너의
+    구조적 실패에 사용한다. 크래시가 관측되지 않은 것은 오류가 아니라
+    정상적인 관측 결과(no-crash)로 취급한다.
+    """
