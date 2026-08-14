@@ -66,6 +66,36 @@ def test_pseudocode_renders_function_draft(client):
     assert body["pseudocode"].strip().endswith("}")
 
 
+def test_win_functions_prefer_strong_hints():
+    """강한 힌트(get_shell)가 약한 힌트(secret_admin)보다 먼저 선택된다."""
+    from types import SimpleNamespace
+
+    from pwnable_lab.analyzer.strategy import _win_functions
+
+    def sym(name, addr):
+        return SimpleNamespace(name=name, addr=addr, defined=True, stype="STT_FUNC")
+
+    # 약한 힌트가 더 낮은 주소지만 강한 힌트가 우선되어야 한다.
+    image = SimpleNamespace(
+        symbols=[sym("secret_admin", 0x1000), sym("get_shell", 0x2000)],
+        dynamic_symbols=[],
+    )
+    result = _win_functions(image)
+    assert result[0][0] == "get_shell"
+
+
+def test_format_string_skeleton_uses_detected_symbol():
+    """포맷 스트링 스켈레톤이 하드코딩 printf 대신 탐지된 함수를 쓴다."""
+    from types import SimpleNamespace
+
+    from pwnable_lab.analyzer.strategy import _skeleton_format_string
+
+    context = SimpleNamespace(bits=64, binary_name="./target")
+    code = _skeleton_format_string(context, "fprintf")
+    assert "fprintf" in code
+    assert "elf.got['fprintf']" in code
+
+
 def test_strategy_rejects_non_elf(client):
     from tests.fixtures import sample_raw
 

