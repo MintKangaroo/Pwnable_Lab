@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field, replace
-from itertools import islice
+from itertools import chain, islice
 from typing import Literal, cast
 
 from capstone import (  # type: ignore[import-untyped]
@@ -121,7 +121,8 @@ def scan_gadgets(
             continue
         executable_sections += 1
         blob = image.data[section.offset : section.offset + section.size]
-        for terminal_start, terminal_end in _terminal_ranges(blob):
+        terminals = chain(_terminal_ranges(blob), _indirect_terminals(engine, blob))
+        for terminal_start, terminal_end in terminals:
             for start in range(max(0, terminal_start - _MAX_BACK), terminal_start + 1):
                 gadget = _decode_gadget(
                     engine,
@@ -489,6 +490,33 @@ def _terminal_ranges(blob: bytes):  # noqa: ANN202
             yield index, index + 2
 
 
+def _indirect_terminals(engine: Cs, blob: bytes):  # noqa: ANN202
+    """간접 분기(JOP/COP) 종단 ``jmp/call reg`` · ``jmp/call [mem]`` 을 찾는다.
+
+    ``0xFF`` opcode + ModRM reg 필드가 2(call r/m) 또는 4(jmp r/m)인 near 간접
+    분기만 대상으로 한다. 상대 분기(E8/E9)와 far 변형은 제외한다. 정확한 종단
+    길이는 Capstone 으로 1개 명령을 디코드해 확정하며, 최종 종단 인정은
+    :func:`_is_terminal` 이 다시 검증한다. REX prefix(0x40–0x4F)가 앞선 경우도 포함.
+    """
+
+    length = len(blob)
+    for index, byte in enumerate(blob):
+        opcode_index = index
+        if 0x40 <= byte <= 0x4F and index + 1 < length and blob[index + 1] == 0xFF:
+            opcode_index = index + 1
+        elif byte != 0xFF:
+            continue
+        if opcode_index + 1 >= length:
+            continue
+        reg_field = (blob[opcode_index + 1] >> 3) & 0x7
+        if reg_field not in (2, 4):  # 2=call r/m, 4=jmp r/m (near, indirect)
+            continue
+        decoded = next(iter(engine.disasm(blob[index : index + 15], 0)), None)
+        if decoded is None or not _is_terminal(decoded):
+            continue
+        yield index, index + decoded.size
+
+
 def _decode_gadget(
     engine: Cs,
     blob: bytes,
@@ -696,9 +724,14 @@ def _is_terminal(instruction) -> bool:  # noqa: ANN001
         return True
     if instruction.mnemonic.lower() == "syscall":
         return True
-    return bool(
-        instruction.mnemonic.lower() == "int" and instruction.op_str.lower() == "0x80"
-    )
+    if instruction.mnemonic.lower() == "int" and instruction.op_str.lower() == "0x80":
+        return True
+    if instruction.group(CS_GRP_JUMP) or instruction.group(CS_GRP_CALL):
+        # 간접 분기(jmp/call reg 또는 [mem])만 JOP/COP 종단으로 인정한다.
+        # 상대 분기(jmp/call rel)는 제어를 뺏기지 않으므로 제외.
+        operands = instruction.operands
+        return bool(operands) and operands[0].type in (X86_OP_REG, X86_OP_MEM)
+    return False
 
 
 def _image_base(image: ElfImage) -> int:

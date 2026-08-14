@@ -60,6 +60,8 @@ _BUFFER_ARGUMENT = {
 }
 _OVERFLOW_SYMBOLS = set(_BUFFER_ARGUMENT)
 _RBP_DISP = re.compile(r"rbp\s*-\s*(0x[0-9a-fA-F]+|\d+)")
+# `lea <reg>, [rbp - <disp>]` — gcc 가 버퍼 주소를 인자 레지스터에 실을 때의 관용구.
+_LEA_RBP = re.compile(r"lea\s+(\w+)\s*,\s*\[\s*rbp\s*-\s*(0x[0-9a-fA-F]+|\d+)")
 
 
 @dataclass
@@ -248,15 +250,9 @@ def _infer_offset(context: _Context) -> tuple[int | None, str, str | None]:
     for symbol, site in _overflow_call_sites(context):
         reg64, reg32 = _BUFFER_ARGUMENT.get(symbol, ("rdi", "stack_arg_0"))
         buffer_expr = site.arguments.get(reg64 if context.bits == 64 else reg32)
-        if not buffer_expr:
-            # window 디스어셈블에서 rbp 상대 lea 를 직접 탐색.
-            joined = " ; ".join(site.surrounding_disassembly)
-            match = _RBP_DISP.search(joined)
-        else:
-            match = _RBP_DISP.search(buffer_expr)
-        if not match:
+        disp = _buffer_rbp_disp(buffer_expr, site.surrounding_disassembly)
+        if disp is None:
             continue
-        disp = int(match.group(1), 0)
         candidate = disp + word  # saved rbp 이후가 반환 주소.
         if best is None or candidate > best:
             best = candidate
@@ -267,6 +263,30 @@ def _infer_offset(context: _Context) -> tuple[int | None, str, str | None]:
     if best is not None:
         return best, "inferred", evidence
     return None, "unknown", None
+
+
+def _buffer_rbp_disp(buffer_expr: str | None, surrounding: list[str]) -> int | None:
+    """오버플로 버퍼가 위치한 ``[rbp - disp]`` 의 disp 를 구한다.
+
+    1. 인자값이 메모리식(``[rbp - N]``)이면 직접 파싱한다.
+    2. 인자값이 레지스터명이면, **그 레지스터**를 ``lea reg, [rbp - N]`` 로 적재하는
+       주변 명령을 찾아 disp 를 구한다. gcc 는 보통 ``lea rax, [rbp - N]; mov rdi, rax``
+       처럼 버퍼 주소를 간접 전달하므로 인자값이 ``rax`` 같은 레지스터로만 기록된다.
+       이 경우가 이전 구현이 오프셋 추론에 실패하던 지점이다.
+    3. 위가 모두 실패하면 주변 window 의 첫 rbp 변위를 폴백으로 쓴다.
+    """
+    if buffer_expr:
+        direct = _RBP_DISP.search(buffer_expr)
+        if direct:
+            return int(direct.group(1), 0)
+        register = buffer_expr.strip().lower()
+        if register.isalnum():
+            for line in surrounding:
+                lea = _LEA_RBP.search(line)
+                if lea and lea.group(1).lower() == register:
+                    return int(lea.group(2), 0)
+    fallback = _RBP_DISP.search(" ; ".join(surrounding))
+    return int(fallback.group(1), 0) if fallback else None
 
 
 def _detect_primitives(context: _Context) -> list[Primitive]:

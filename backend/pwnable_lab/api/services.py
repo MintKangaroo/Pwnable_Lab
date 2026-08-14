@@ -312,7 +312,8 @@ class AnalysisService:
                     "Register and memory access metadata comes from Capstone instruction detail",
                 ],
                 "limitations": [
-                    "This increment scans ret, ret-imm, syscall, and int 0x80 terminators",
+                    "Scans ret, ret-imm, syscall, int 0x80, and indirect "
+                    "jmp/call reg or [mem] (JOP/COP) terminators",
                     "Quality scores are ranking heuristics and do not prove runtime usability",
                 ],
             }
