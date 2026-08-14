@@ -2,8 +2,8 @@
 
 진짜 디컴파일러(Ghidra/angr)가 아니다. 선형 디스어셈블을 사람이 읽기 쉬운 C 유사
 의사코드로 바꾸는 패턴 변환기다. 함수 프롤로그/에필로그, 호출과 인자, 문자열 리터럴,
-비교/분기(if/goto), 반환을 근사한다. 복잡한 데이터 흐름과 타입은 복원하지 않으며,
-결과는 모두 ``inferred`` 로 표기한다.
+비교/분기(if/goto), 후방 분기 기반 반복문(do/while 근사), 반환을 근사한다. 복잡한
+데이터 흐름과 타입은 복원하지 않으며, 결과는 모두 ``inferred`` 로 표기한다.
 """
 
 from __future__ import annotations
@@ -85,6 +85,7 @@ def decompile_function(
         "notes": [
             "이것은 진짜 디컴파일이 아니라 어셈블리의 규칙 기반 근사입니다.",
             "인자 개수/타입, 지역변수, 반복문 구조는 정확하지 않을 수 있습니다.",
+            "반복문은 후방 분기를 do/while 로 근사하며, while/for 원형은 복원하지 않습니다.",
             "호출 인자는 직전 레지스터 설정만 보고 추정합니다.",
         ],
         "disassembly_verification": "verified",
@@ -114,6 +115,21 @@ def _label_map(instructions: list[dict]) -> dict[int, str]:
     return labels
 
 
+def _loop_headers(instructions: list[dict]) -> set[int]:
+    """후방 분기(target < 분기 주소)의 목표를 루프 헤더로 본다."""
+    addresses = {insn.get("address") for insn in instructions}
+    headers: set[int] = set()
+    for insn in instructions:
+        if not insn.get("is_jump"):
+            continue
+        target = insn.get("target")
+        if not isinstance(target, int):
+            continue
+        if target < insn.get("address", 0) and target in addresses:
+            headers.add(target)
+    return headers
+
+
 def _emit_body(
     instructions: list[dict],
     bits: int,
@@ -123,21 +139,52 @@ def _emit_body(
     out: list[str] = []
     # 인자 레지스터 → 마지막으로 대입된 표현식(간단한 블록 내 추적).
     reg_expr: dict[str, str] = {}
+    loop_headers = _loop_headers(instructions)
+    loop_stack: list[int] = []  # 열려 있는 do{ 루프 헤더 주소 스택.
+    indent = 0
 
     def reset_regs() -> None:
         reg_expr.clear()
+
+    def emit(text: str) -> None:
+        out.append(("    " * indent + text) if text else "")
 
     for insn in instructions:
         address = insn.get("address", 0)
         mnem = insn.get("mnemonic", "")
         op_str = insn.get("op_str", "")
+        target = insn.get("target")
 
-        # 분기 목표면 라벨을 먼저 출력.
+        # 루프 헤더 주소에 도달하면 do{ 를 열고 들여쓴다.
+        if address in loop_headers and address not in loop_stack:
+            emit("do {")
+            loop_stack.append(address)
+            indent += 1
+
+        # 분기 목표면 라벨을 먼저 출력(구조화되지 않은 goto 참조 보존).
         if address in labels:
-            out.append(f"{labels[address]}:")
+            emit(f"{labels[address]}:")
+
+        # 후방 분기가 현재 열린 루프의 헤더를 정확히 가리키면 } while 로 닫는다.
+        is_backward = isinstance(target, int) and target < address
+        closes_loop = (
+            is_backward
+            and loop_stack
+            and target == loop_stack[-1]
+            and (mnem in _JCC_CONDITION or mnem == "jmp")
+        )
+        if closes_loop:
+            indent = max(indent - 1, 0)
+            loop_stack.pop()
+            if mnem == "jmp":
+                emit("} while (1);  // jmp (loop back-edge)")
+            else:
+                emit(f"}} while (cond {_JCC_CONDITION[mnem]});  // {mnem}")
+            reset_regs()
+            continue
 
         if mnem == "call":
-            out.append(_render_call(insn, bits, names, reg_expr))
+            emit(_render_call(insn, bits, names, reg_expr))
             reset_regs()
             continue
 
@@ -153,7 +200,7 @@ def _emit_body(
             continue
 
         if mnem in _JCC_CONDITION:
-            out.append(
+            emit(
                 f"if (cond {_JCC_CONDITION[mnem]}) goto "
                 f"{_branch_label(insn, labels, op_str)};  // {mnem}"
             )
@@ -161,16 +208,16 @@ def _emit_body(
             continue
 
         if mnem == "cmp" or mnem == "test":
-            out.append(f"// {mnem} {op_str}")
+            emit(f"// {mnem} {op_str}")
             continue
 
         if mnem == "jmp":
-            out.append(f"goto {_branch_label(insn, labels, op_str)};")
+            emit(f"goto {_branch_label(insn, labels, op_str)};")
             reset_regs()
             continue
 
         if mnem == "ret":
-            out.append("return eax;  // ret")
+            emit("return eax;  // ret")
             continue
 
         if mnem in _PROLOGUE_EPILOGUE:
@@ -180,11 +227,17 @@ def _emit_body(
             # 스택 프레임 조정(sub/add rsp)은 이미 frame[] 로 표현했으므로 생략.
             if op_str.split(",", 1)[0].strip() in {"rsp", "esp"}:
                 continue
-            out.append(f"// {mnem} {op_str}".rstrip())
+            emit(f"// {mnem} {op_str}".rstrip())
             continue
 
         # 그 외는 원본 명령을 주석으로 보존.
-        out.append(f"// 0x{address:x}: {mnem} {op_str}".rstrip())
+        emit(f"// 0x{address:x}: {mnem} {op_str}".rstrip())
+
+    # 닫지 못한 루프(irreducible/겹침)는 괄호 균형을 위해 마지막에 닫는다.
+    while loop_stack:
+        loop_stack.pop()
+        indent = max(indent - 1, 0)
+        emit("}  // loop end (구조 추정 불완전)")
 
     if not out:
         out.append("// (본문 명령이 없습니다)")

@@ -34,6 +34,53 @@ def test_strategy_recommends_ret2win_when_win_symbol_present(client):
         assert isinstance(path["steps"], list)
 
 
+def test_pseudocode_structures_backward_branch_as_loop():
+    """후방 분기를 do/while 루프로 구조화하고 본문을 들여쓴다."""
+    from pwnable_lab.analyzer.decompile import decompile_function
+
+    detail = {
+        "name": "loop_fn",
+        "address": 0x1000,
+        "end": 0x100E,
+        "instructions": [
+            {"address": 0x1000, "mnemonic": "mov", "op_str": "eax, 0"},
+            {"address": 0x1005, "mnemonic": "add", "op_str": "eax, 1"},
+            {"address": 0x1008, "mnemonic": "cmp", "op_str": "eax, 0xa"},
+            {
+                "address": 0x100B,
+                "mnemonic": "jl",
+                "op_str": "0x1005",
+                "is_jump": True,
+                "target": 0x1005,
+            },
+            {"address": 0x100D, "mnemonic": "ret", "op_str": ""},
+        ],
+    }
+    result = decompile_function(detail, bits=64)
+    code = result["pseudocode"]
+    assert "do {" in code
+    assert "} while (cond <);" in code
+    # do{ 다음 본문 줄이 한 단계 더 들여쓰기된다.
+    assert "        // cmp eax, 0xa" in code
+
+
+def test_pseudocode_no_loop_without_backward_branch():
+    """후방 분기가 없으면 do/while 을 만들지 않는다."""
+    from pwnable_lab.analyzer.decompile import decompile_function
+
+    detail = {
+        "name": "straight_fn",
+        "address": 0x2000,
+        "end": 0x2007,
+        "instructions": [
+            {"address": 0x2000, "mnemonic": "mov", "op_str": "eax, 1"},
+            {"address": 0x2005, "mnemonic": "ret", "op_str": ""},
+        ],
+    }
+    code = decompile_function(detail, bits=64)["pseudocode"]
+    assert "do {" not in code
+
+
 def test_strategy_reports_primitive_evidence(client):
     binary_id = _upload(client).json()["binary_id"]
     body = client.get(f"/api/v1/binaries/{binary_id}/strategy").json()
