@@ -22,8 +22,13 @@ import tempfile
 from typing import Protocol
 
 from pwnable_lab.errors import SandboxError
+from pwnable_lab.payload.pack import build_overflow
 from pwnable_lab.sandbox.gate import require_sandbox_boundary
-from pwnable_lab.sandbox.runner import SandboxLimits, confirm_return_offset
+from pwnable_lab.sandbox.runner import (
+    SandboxLimits,
+    confirm_return_offset,
+    verify_payload,
+)
 
 
 class _ExecutorSettings(Protocol):
@@ -80,7 +85,64 @@ def confirm_offset_in_container(
     강제한다.
     """
 
-    argv = _docker_argv(settings, pattern_length)
+    return _run_container(settings, ["--stdin", "--pattern-length", str(pattern_length)], data)
+
+
+def verify_exploit_in_process(
+    data: bytes,
+    *,
+    offset: int,
+    target: int,
+    bits: int,
+    markers: list[str] | tuple[str, ...] = (),
+    settings: _ExecutorSettings,
+) -> dict:
+    """현재 프로세스에서 ret2win payload 를 주입해 익스 성공을 검증한다."""
+
+    require_sandbox_boundary(settings)
+    payload = build_overflow(offset, target, bits=bits)
+    path = _materialize_executable(data)
+    try:
+        result = verify_payload(
+            path, payload, success_markers=markers, limits=_limits(settings)
+        )
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    return result.as_dict()
+
+
+def verify_exploit_in_container(
+    data: bytes,
+    *,
+    offset: int,
+    target: int,
+    bits: int,
+    markers: list[str] | tuple[str, ...] = (),
+    settings: _ExecutorSettings,
+) -> dict:
+    """일회용 컨테이너에서 ret2win payload 를 주입해 익스 성공을 검증한다."""
+
+    cli_args = [
+        "--stdin",
+        "--verify",
+        "--offset", str(offset),
+        "--target", str(target),
+        "--bits", str(bits),
+    ]
+    for marker in markers:
+        cli_args += ["--marker", marker]
+    return _run_container(settings, cli_args, data)
+
+
+def _run_container(
+    settings: _ExecutorSettings, cli_args: list[str], data: bytes
+) -> dict:
+    """하드닝 docker 컨테이너를 띄워 CLI 를 실행하고 JSON 결과를 파싱한다."""
+
+    argv = _docker_base_argv(settings) + cli_args
     try:
         proc = subprocess.run(  # noqa: S603 - argv 는 신뢰된 설정으로만 구성
             argv,
@@ -109,13 +171,11 @@ def confirm_offset_in_container(
     try:
         return json.loads(stdout)
     except json.JSONDecodeError as exc:
-        raise SandboxError(
-            f"샌드박스 컨테이너 출력 파싱 실패: {exc}"
-        ) from exc
+        raise SandboxError(f"샌드박스 컨테이너 출력 파싱 실패: {exc}") from exc
 
 
-def _docker_argv(settings: _ExecutorSettings, pattern_length: int) -> list[str]:
-    """``sandbox/run.sh`` 와 동일한 하드닝 플래그로 docker argv 를 구성한다."""
+def _docker_base_argv(settings: _ExecutorSettings) -> list[str]:
+    """``sandbox/run.sh`` 와 동일한 하드닝 플래그(이미지까지)로 argv 를 구성한다."""
 
     mem = settings.sandbox_container_memory
     argv = [settings.sandbox_docker_bin, "run", "--rm", "-i"]
@@ -138,8 +198,6 @@ def _docker_argv(settings: _ExecutorSettings, pattern_length: int) -> list[str]:
         "-e", f"PLAB_SANDBOX_CPU_SECONDS={settings.sandbox_cpu_seconds}",
         "-e", f"PLAB_SANDBOX_ADDRESS_SPACE_BYTES={settings.sandbox_address_space_bytes}",
         settings.sandbox_container_image,
-        "--stdin",
-        "--pattern-length", str(pattern_length),
     ]
     return argv
 

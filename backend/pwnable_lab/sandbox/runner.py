@@ -55,12 +55,15 @@ class SandboxLimits:
     address_space_bytes: int = 512 * 1024 * 1024
     max_processes: int = 64
     stack_peek_words: int = 8
+    capture_stdout_bytes: int = 4096  # stdout 캡처 상한(payload 검증용)
 
     def validate(self) -> None:
         if self.wall_seconds <= 0 or self.cpu_seconds <= 0:
             raise SandboxError("시간 상한은 양수여야 합니다.")
         if self.stack_peek_words < 1:
             raise SandboxError("stack_peek_words 는 1 이상이어야 합니다.")
+        if self.capture_stdout_bytes < 0:
+            raise SandboxError("capture_stdout_bytes 는 0 이상이어야 합니다.")
 
 
 @dataclass
@@ -77,6 +80,7 @@ class CrashObservation:
     stack_words: list[tuple[int, int]] = field(default_factory=list)
     exit_code: int | None = None
     note: str | None = None
+    stdout: bytes = b""  # capture_stdout=True 일 때만 채워짐
 
     def as_dict(self) -> dict:
         return {
@@ -99,6 +103,7 @@ class CrashObservation:
             ],
             "exit_code": self.exit_code,
             "note": self.note,
+            "stdout": self.stdout.decode("utf-8", "replace"),
         }
 
 
@@ -174,10 +179,15 @@ def run_with_input(
     stdin_bytes: bytes,
     *,
     limits: SandboxLimits | None = None,
+    capture_stdout: bool = False,
 ) -> CrashObservation:
     """``binary_path`` 를 ``stdin_bytes`` 로 1회 실행하고 크래시를 관측한다.
 
     비대화형(표준입력만). 반환 시점에 자식은 반드시 종료돼 있다.
+    ``capture_stdout=True`` 면 자식 stdout 을 파이프로 받아
+    ``CrashObservation.stdout`` 에 ``limits.capture_stdout_bytes`` 까지 담는다.
+    (stderr 는 항상 버린다. 대상의 stdout 이 full-buffered 라 크래시 시점에
+    flush 되지 않았을 수 있음에 유의 — 성공 판정을 stdout 에만 의존하지 말 것.)
     """
 
     _require_supported_platform()
@@ -188,6 +198,9 @@ def run_with_input(
 
     lib = _libc()
     read_fd, write_fd = os.pipe()
+    out_read = out_write = None
+    if capture_stdout:
+        out_read, out_write = os.pipe()
     pid = os.fork()
     if pid == 0:  # pragma: no cover - 자식 프로세스
         try:
@@ -196,7 +209,12 @@ def run_with_input(
             os.dup2(read_fd, 0)
             os.close(read_fd)
             devnull = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull, 1)
+            if out_write is not None:
+                os.close(out_read)
+                os.dup2(out_write, 1)
+                os.close(out_write)
+            else:
+                os.dup2(devnull, 1)
             os.dup2(devnull, 2)
             _apply_child_limits(limits)
             lib.ptrace(_PTRACE_TRACEME, 0, None, None)
@@ -207,6 +225,9 @@ def run_with_input(
 
     # --- 부모 ---
     os.close(read_fd)
+    if out_write is not None:
+        os.close(out_write)
+        os.set_blocking(out_read, False)
     try:
         os.write(write_fd, stdin_bytes)
     except BrokenPipeError:
@@ -214,57 +235,95 @@ def run_with_input(
     finally:
         os.close(write_fd)
 
-    return _supervise(lib, pid, limits)
+    try:
+        return _supervise(lib, pid, limits, out_fd=out_read)
+    finally:
+        if out_read is not None:
+            os.close(out_read)
 
 
-def _supervise(lib: ctypes.CDLL, pid: int, limits: SandboxLimits) -> CrashObservation:
+def _supervise(
+    lib: ctypes.CDLL,
+    pid: int,
+    limits: SandboxLimits,
+    *,
+    out_fd: int | None = None,
+) -> CrashObservation:
     deadline = time.monotonic() + limits.wall_seconds
+    stdout_buf = bytearray()
+
+    def drain() -> None:
+        if out_fd is None:
+            return
+        cap = limits.capture_stdout_bytes
+        while len(stdout_buf) < cap:
+            try:
+                chunk = os.read(out_fd, min(4096, cap - len(stdout_buf)))
+            except (BlockingIOError, OSError):
+                break
+            if not chunk:
+                break
+            stdout_buf.extend(chunk)
+
+    def finish(observation: CrashObservation) -> CrashObservation:
+        drain()
+        observation.stdout = bytes(stdout_buf)
+        return observation
 
     # 1) exec 직후 SIGTRAP 정지를 소진하고 실행 재개.
     if not _wait_stop(pid, deadline):
-        return _kill_group(pid, timed_out=True, note="exec 정지를 기다리다 타임아웃")
+        return finish(
+            _kill_group(pid, timed_out=True, note="exec 정지를 기다리다 타임아웃")
+        )
     lib.ptrace(_PTRACE_CONT, pid, None, None)
 
     # 2) 다음 정지 = 크래시(시그널) 또는 정상 종료.
     while True:
+        drain()
         if time.monotonic() > deadline:
-            return _kill_group(pid, timed_out=True, note="실행 wall-clock 초과")
+            return finish(_kill_group(pid, timed_out=True, note="실행 wall-clock 초과"))
         try:
             waited, status = os.waitpid(pid, os.WNOHANG)
         except ChildProcessError:
-            return CrashObservation(
-                crashed=False,
-                timed_out=False,
-                signal=None,
-                signal_name=None,
-                rip=None,
-                rsp=None,
-                note="자식이 이미 회수됨",
+            return finish(
+                CrashObservation(
+                    crashed=False,
+                    timed_out=False,
+                    signal=None,
+                    signal_name=None,
+                    rip=None,
+                    rsp=None,
+                    note="자식이 이미 회수됨",
+                )
             )
         if waited == 0:
             time.sleep(0.002)
             continue
         if os.WIFEXITED(status):
-            return CrashObservation(
-                crashed=False,
-                timed_out=False,
-                signal=None,
-                signal_name=None,
-                rip=None,
-                rsp=None,
-                exit_code=os.WEXITSTATUS(status),
-                note="크래시 없이 정상 종료",
+            return finish(
+                CrashObservation(
+                    crashed=False,
+                    timed_out=False,
+                    signal=None,
+                    signal_name=None,
+                    rip=None,
+                    rsp=None,
+                    exit_code=os.WEXITSTATUS(status),
+                    note="크래시 없이 정상 종료",
+                )
             )
         if os.WIFSIGNALED(status):
             sig = os.WTERMSIG(status)
-            return CrashObservation(
-                crashed=True,
-                timed_out=False,
-                signal=sig,
-                signal_name=signal.Signals(sig).name,
-                rip=None,
-                rsp=None,
-                note="ptrace 외부에서 시그널 종료",
+            return finish(
+                CrashObservation(
+                    crashed=True,
+                    timed_out=False,
+                    signal=sig,
+                    signal_name=signal.Signals(sig).name,
+                    rip=None,
+                    rsp=None,
+                    note="ptrace 외부에서 시그널 종료",
+                )
             )
         if os.WIFSTOPPED(status):
             sig = os.WSTOPSIG(status)
@@ -273,7 +332,7 @@ def _supervise(lib: ctypes.CDLL, pid: int, limits: SandboxLimits) -> CrashObserv
                 continue
             observation = _read_crash(lib, pid, sig, limits)
             _kill_group(pid, timed_out=False, note=None)
-            return observation
+            return finish(observation)
 
 
 def _wait_stop(pid: int, deadline: float) -> bool:
@@ -451,5 +510,70 @@ def confirm_return_offset(
             f"{observation.signal_name} 크래시는 관측했으나 RIP/스택에서 "
             "패턴 일치를 찾지 못함(오프셋이 패턴 길이를 초과했을 수 있음)",
         ],
+        observation=observation,
+    )
+
+
+# --- payload 검증 (제어 흐름 탈취 확인) -------------------------------------
+
+
+@dataclass
+class ExploitVerification:
+    """구성한 payload 를 실제로 주입한 결과. 성공 판정과 근거를 동반한다."""
+
+    succeeded: bool
+    reason: str  # "marker-match" | "marker-missing" | "control-transfer" | "crashed"
+    matched_markers: list[str]
+    payload_length: int
+    observation: CrashObservation
+
+    def as_dict(self) -> dict:
+        return {
+            "succeeded": self.succeeded,
+            "reason": self.reason,
+            "matched_markers": list(self.matched_markers),
+            "payload_length": self.payload_length,
+            "observation": self.observation.as_dict(),
+        }
+
+
+def verify_payload(
+    binary_path: str,
+    payload: bytes,
+    *,
+    success_markers: list[str] | tuple[str, ...] = (),
+    limits: SandboxLimits | None = None,
+    append_newline: bool = True,
+) -> ExploitVerification:
+    """``payload`` 를 stdin 으로 주입해 익스가 실제로 먹히는지 관측한다.
+
+    성공 판정:
+
+    * ``success_markers`` 가 주어지면 stdout 에 그 문자열 중 하나라도 나타나면
+      성공(가장 강한 증거 — 예: win 함수가 출력하는 플래그/메시지).
+    * 마커가 없으면 **크래시 없이 제어가 유효 타깃으로 이전**됐는지로 판정한다
+      (오프셋/주소가 맞으면 대상 함수가 실행돼 SIGSEGV 없이 끝난다). stdout 은
+      full-buffered 라 크래시 시 유실될 수 있으므로 마커 단독에 의존하지 않는다.
+    """
+
+    stdin_bytes = payload + b"\n" if append_newline else payload
+    observation = run_with_input(
+        binary_path, stdin_bytes, limits=limits, capture_stdout=True
+    )
+    text = observation.stdout.decode("utf-8", "replace")
+    matched = [m for m in success_markers if m and m in text]
+
+    if success_markers:
+        succeeded = bool(matched)
+        reason = "marker-match" if succeeded else "marker-missing"
+    else:
+        succeeded = not observation.crashed
+        reason = "control-transfer" if succeeded else "crashed"
+
+    return ExploitVerification(
+        succeeded=succeeded,
+        reason=reason,
+        matched_markers=matched,
+        payload_length=len(payload),
         observation=observation,
     )

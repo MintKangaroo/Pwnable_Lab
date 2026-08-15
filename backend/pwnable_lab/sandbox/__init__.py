@@ -16,6 +16,8 @@
 from pwnable_lab.sandbox.executor import (
     confirm_offset_in_container,
     confirm_offset_in_process,
+    verify_exploit_in_container,
+    verify_exploit_in_process,
 )
 from pwnable_lab.sandbox.gate import (
     require_isolation_marker,
@@ -24,14 +26,17 @@ from pwnable_lab.sandbox.gate import (
 )
 from pwnable_lab.sandbox.runner import (
     CrashObservation,
+    ExploitVerification,
     OffsetConfirmation,
     SandboxLimits,
     confirm_return_offset,
     run_with_input,
+    verify_payload,
 )
 
 __all__ = [
     "CrashObservation",
+    "ExploitVerification",
     "OffsetConfirmation",
     "SandboxLimits",
     "confirm_offset_in_container",
@@ -41,4 +46,7 @@ __all__ = [
     "require_sandbox_boundary",
     "require_sandbox_enabled",
     "run_with_input",
+    "verify_exploit_in_container",
+    "verify_exploit_in_process",
+    "verify_payload",
 ]
