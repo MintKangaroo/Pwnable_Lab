@@ -20,7 +20,11 @@ from pwnable_lab.analyzer.gadgets import (
     simulate_chain,
 )
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
-from pwnable_lab.analyzer.strategy import analyze_strategy, inject_confirmed_offset
+from pwnable_lab.analyzer.strategy import (
+    analyze_strategy,
+    inject_confirmed_offset,
+    ret2win_target,
+)
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
@@ -294,6 +298,8 @@ class AnalysisService:
         1. ``exploit_strategy`` 로 후보 경로와 pwntools 스켈레톤을 만든다(정적).
         2. 격리 러너로 반환 주소 오프셋을 실제 실행으로 확정한다(동적).
         3. 확정된 오프셋을 각 스켈레톤에 주입해 "실행 가능한" 초안으로 승격한다.
+        4. ret2win 타깃(win 함수, non-PIE 절대주소)이 있으면 확정 오프셋으로
+           payload 를 자동 구성해 익스가 실제로 먹히는지 검증한다(무입력).
 
         오프셋 확정에 실패하면 정적 스켈레톤을 그대로 두고 ``confirmation`` 에
         관측 근거를 담아 반환한다(예외 아님).
@@ -303,13 +309,45 @@ class AnalysisService:
         confirmation = self._run_offset_confirmation(
             data, pattern_length=pattern_length, feature="Auto-exploit"
         )
+        verification: dict = {"attempted": False, "reason": "offset-unconfirmed"}
         if confirmation.get("confirmed") and confirmation.get("offset") is not None:
+            offset = int(confirmation["offset"])
             strategy = inject_confirmed_offset(
-                strategy,
-                int(confirmation["offset"]),
-                method=confirmation.get("method"),
+                strategy, offset, method=confirmation.get("method")
             )
-        return {"strategy": strategy, "confirmation": confirmation}
+            verification = self._auto_verify_ret2win(data, offset)
+        return {
+            "strategy": strategy,
+            "confirmation": confirmation,
+            "verification": verification,
+        }
+
+    def _auto_verify_ret2win(self, data: bytes, offset: int) -> dict:
+        """확정 오프셋 + 정적 win 주소로 ret2win payload 를 자동 검증한다.
+
+        win 함수가 없으면 시도하지 않는다. 정렬(movaps)이나 ROP 가 필요한
+        바이너리는 직접 검증이 실패할 수 있으며, 그 경우 명시적
+        ``verify-exploit`` 엔드포인트로 체인을 구성해 확인한다.
+        """
+
+        image = parse_elf(data)
+        target = ret2win_target(image)
+        if target is None:
+            return {"attempted": False, "reason": "no-ret2win-target"}
+        name, addr = target
+        result = self.verify_exploit(
+            data, offset=offset, target=addr, bits=image.bits or 64
+        )
+        return {
+            "attempted": True,
+            "technique": "ret2win",
+            "target_name": name,
+            "target_addr": addr,
+            "target_addr_hex": f"0x{addr:x}",
+            "succeeded": result.get("succeeded", False),
+            "reason": result.get("reason"),
+            "result": result,
+        }
 
     def verify_exploit(
         self,
