@@ -60,6 +60,21 @@ class Settings(BaseSettings):
     )
     sandbox_pattern_length: int = Field(default=512, ge=8, le=65536)
 
+    # 실행 위치 선택:
+    #   "inprocess" — API 프로세스 안에서 러너를 직접 호출(dev/tests 기본).
+    #                 API 프로세스 자체가 격리 경계 안에 있어야 안전하다.
+    #   "container" — 매 요청마다 network-disabled 일회용 컨테이너를 띄워 실행.
+    #                 프로덕션 권장. sandbox/run.sh 와 동일한 하드닝을 강제한다.
+    sandbox_executor: str = Field(default="inprocess", pattern="^(inprocess|container)$")
+    sandbox_container_image: str = "pwnpilot-sandbox"
+    sandbox_docker_bin: str = "docker"
+    sandbox_container_runtime: str = ""  # 예) "runsc" (gVisor)
+    sandbox_container_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    sandbox_container_memory: str = "768m"
+    sandbox_container_cpus: str = "1"
+    sandbox_container_pids: int = Field(default=128, gt=0, le=100_000)
+    sandbox_container_tmp_size: str = "64m"
+
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 

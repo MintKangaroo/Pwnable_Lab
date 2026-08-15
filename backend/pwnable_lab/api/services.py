@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
-import stat
-import tempfile
 from dataclasses import asdict, dataclass
 
 from pwnable_lab.analyzer.checksec import run_checksec
@@ -39,9 +36,9 @@ from pwnable_lab.pe.analyzer import (
 )
 from pwnable_lab.pe.parser import parse_pe
 from pwnable_lab.sandbox import (
-    SandboxLimits,
-    confirm_return_offset,
-    require_sandbox_boundary,
+    confirm_offset_in_container,
+    confirm_offset_in_process,
+    require_sandbox_enabled,
 )
 
 logger = logging.getLogger(__name__)
@@ -283,51 +280,28 @@ class AnalysisService:
            사용해야 한다.
         """
 
-        self._require_sandbox_enabled()
-        self._require_format(data, ArtifactFormat.ELF, feature="Dynamic offset confirmation")
+        # 마스터 게이트(활성화 여부)는 항상 API 계층에서 검증 → 비활성 시 503.
+        # 격리 마커는 "실제 실행이 일어나는 곳"에서 확인한다: in-process 는
+        # executor 내부에서, container 는 컨테이너 안의 CLI 가 검증한다.
+        require_sandbox_enabled(self.settings)
+        self._require_format(
+            data, ArtifactFormat.ELF, feature="Dynamic offset confirmation"
+        )
 
         length = pattern_length or self.settings.sandbox_pattern_length
-        limits = SandboxLimits(
-            wall_seconds=self.settings.sandbox_wall_seconds,
-            cpu_seconds=self.settings.sandbox_cpu_seconds,
-            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        logger.warning(
+            "sandbox: confirming offset for untrusted binary "
+            "(executor=%s, pattern_length=%d)",
+            self.settings.sandbox_executor,
+            length,
         )
-        path = self._materialize_executable(data)
-        try:
-            logger.warning(
-                "sandbox: executing untrusted binary for offset confirmation "
-                "(pattern_length=%d)",
-                length,
+        if self.settings.sandbox_executor == "container":
+            return confirm_offset_in_container(
+                data, pattern_length=length, settings=self.settings
             )
-            result = confirm_return_offset(path, pattern_length=length, limits=limits)
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-        return result.as_dict()
-
-    def _require_sandbox_enabled(self) -> None:
-        """동적 실행 게이트 + 격리 마커 확인. 통과 못 하면 ``SandboxError``(→503)."""
-
-        require_sandbox_boundary(self.settings)
-
-    @staticmethod
-    def _materialize_executable(data: bytes) -> str:
-        """업로드 바이트를 소유자 전용(0o700) 임시 실행파일로 기록하고 경로 반환."""
-
-        fd, path = tempfile.mkstemp(prefix="plab-sbx-")
-        try:
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(data)
-            os.chmod(path, stat.S_IRWXU)  # 0o700, 소유자만 rwx
-        except OSError:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-            raise
-        return path
+        return confirm_offset_in_process(
+            data, pattern_length=length, settings=self.settings
+        )
 
     def pseudo_c(self, data: bytes, *, address: int) -> dict:
         """단일 함수의 규칙 기반 pseudo-C 초안."""

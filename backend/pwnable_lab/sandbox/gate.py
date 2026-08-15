@@ -24,8 +24,12 @@ class _GateSettings(Protocol):
     sandbox_isolation_marker: str
 
 
-def require_sandbox_boundary(settings: _GateSettings) -> None:
-    """게이트 + 격리 마커를 검증한다. 실패 시 ``SandboxError``."""
+def require_sandbox_enabled(settings: _GateSettings) -> None:
+    """마스터 게이트만 검증한다(격리 마커는 보지 않음). 실패 시 ``SandboxError``.
+
+    실행 위치(API 프로세스 / 일회용 컨테이너)와 무관하게, 이 배포에서 동적
+    실행 기능이 켜져 있는지를 확인한다.
+    """
 
     if not settings.sandbox_execution_enabled:
         raise SandboxError(
@@ -33,9 +37,25 @@ def require_sandbox_boundary(settings: _GateSettings) -> None:
             "network-disabled 격리 컨테이너 안에서 "
             "PLAB_SANDBOX_EXECUTION_ENABLED=1 로만 활성화하세요."
         )
+
+
+def require_isolation_marker(settings: _GateSettings) -> None:
+    """격리 마커가 설정됐다면 그 경로가 존재하는지 검증한다. 실패 시 ``SandboxError``.
+
+    **실행이 일어나는 바로 그 프로세스**(in-process 러너, 또는 컨테이너 안의 CLI)
+    에서 호출해야 의미가 있다. 마커는 "실행이 격리 경계 안에서 벌어진다"는 증거다.
+    """
+
     marker = settings.sandbox_isolation_marker
     if marker and not os.path.exists(marker):
         raise SandboxError(
             "격리 마커를 찾을 수 없어 실행을 거부합니다: "
             f"{marker} (컨테이너 경계 미확인)."
         )
+
+
+def require_sandbox_boundary(settings: _GateSettings) -> None:
+    """마스터 게이트 + 격리 마커를 함께 검증한다. 실패 시 ``SandboxError``."""
+
+    require_sandbox_enabled(settings)
+    require_isolation_marker(settings)
