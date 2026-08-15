@@ -234,6 +234,24 @@ async def binary_confirm_offset(
     )
 
 
+@router.post("/{sha256}/auto-exploit")
+async def binary_auto_exploit(
+    sha256: str,
+    pattern_length: int | None = Query(default=None, ge=8, le=65536),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """정적 전략 + 동적 오프셋 확정을 결합한 exploit 초안.
+
+    후보 경로/pwntools 스켈레톤을 만든 뒤, 격리 샌드박스로 확정한 오프셋을
+    스켈레톤에 주입해 반환한다. 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.auto_exploit, data, pattern_length=pattern_length
+    )
+
+
 @router.get("/{sha256}/functions/{address}/pseudocode")
 def binary_function_pseudocode(
     sha256: str,
