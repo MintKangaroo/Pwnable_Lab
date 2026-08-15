@@ -35,8 +35,8 @@ _OK = {
 }
 
 
-def test_docker_argv_has_hardening_flags():
-    argv = executor._docker_argv(_settings(sandbox_container_runtime="runsc"), 400)
+def test_docker_base_argv_has_hardening_flags():
+    argv = executor._docker_base_argv(_settings(sandbox_container_runtime="runsc"))
     joined = " ".join(argv)
     assert argv[:4] == ["docker", "run", "--rm", "-i"]
     assert "--runtime runsc" in joined
@@ -47,13 +47,36 @@ def test_docker_argv_has_hardening_flags():
     assert "no-new-privileges" in joined
     assert "/tmp:rw,exec,nosuid" in joined
     assert "/run:rw,noexec,nosuid" in joined
-    # 이미지와 CLI 인자는 맨 끝.
-    assert argv[-4:] == ["pwnpilot-sandbox", "--stdin", "--pattern-length", "400"]
+    # base argv 의 끝은 이미지(그 뒤에 CLI 인자가 붙는다).
+    assert argv[-1] == "pwnpilot-sandbox"
 
 
-def test_docker_argv_omits_runtime_when_unset():
-    argv = executor._docker_argv(_settings(), 512)
+def test_docker_base_argv_omits_runtime_when_unset():
+    argv = executor._docker_base_argv(_settings())
     assert "--runtime" not in argv
+
+
+def test_verify_container_builds_expected_cli_args(monkeypatch):
+    captured = {}
+
+    def fake_run(argv, *, input, capture_output, timeout):
+        captured["argv"] = argv
+        captured["input"] = input
+        return _proc(stdout=b'{"succeeded": true}')
+
+    monkeypatch.setattr(executor.subprocess, "run", fake_run)
+    out = executor.verify_exploit_in_container(
+        b"\x7fELF", offset=72, target=0x401156, bits=64, markers=["WIN"],
+        settings=_settings(),
+    )
+    assert out == {"succeeded": True}
+    argv = captured["argv"]
+    assert "--verify" in argv
+    assert argv[argv.index("--offset") + 1] == "72"
+    assert argv[argv.index("--target") + 1] == str(0x401156)
+    assert argv[argv.index("--bits") + 1] == "64"
+    assert argv[argv.index("--marker") + 1] == "WIN"
+    assert captured["input"] == b"\x7fELF"
 
 
 def test_container_success_parses_stdout(monkeypatch):

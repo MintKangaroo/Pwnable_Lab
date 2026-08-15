@@ -39,6 +39,8 @@ from pwnable_lab.sandbox import (
     confirm_offset_in_container,
     confirm_offset_in_process,
     require_sandbox_enabled,
+    verify_exploit_in_container,
+    verify_exploit_in_process,
 )
 
 logger = logging.getLogger(__name__)
@@ -308,6 +310,48 @@ class AnalysisService:
                 method=confirmation.get("method"),
             )
         return {"strategy": strategy, "confirmation": confirmation}
+
+    def verify_exploit(
+        self,
+        data: bytes,
+        *,
+        offset: int,
+        target: int,
+        bits: int | None = None,
+        markers: list[str] | tuple[str, ...] = (),
+    ) -> dict:
+        """구성한 ret2win payload 를 격리 샌드박스에 주입해 익스 성공을 검증한다.
+
+        ``payload = b'A'*offset + p{bits}(target)`` 를 실제로 보내, 크래시 없이
+        제어가 이전됐는지(또는 ``markers`` 가 stdout 에 나타나는지)로 판정한다.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Exploit verification")
+        resolved_bits = bits or (parse_elf(data).bits or 64)
+        logger.warning(
+            "sandbox: verifying exploit (executor=%s, offset=%d, target=0x%x)",
+            self.settings.sandbox_executor,
+            offset,
+            target,
+        )
+        if self.settings.sandbox_executor == "container":
+            return verify_exploit_in_container(
+                data,
+                offset=offset,
+                target=target,
+                bits=resolved_bits,
+                markers=markers,
+                settings=self.settings,
+            )
+        return verify_exploit_in_process(
+            data,
+            offset=offset,
+            target=target,
+            bits=resolved_bits,
+            markers=markers,
+            settings=self.settings,
+        )
 
     def _run_offset_confirmation(
         self, data: bytes, *, pattern_length: int | None, feature: str

@@ -30,10 +30,12 @@ import tempfile
 
 from pwnable_lab.config import get_settings
 from pwnable_lab.errors import SandboxError
+from pwnable_lab.payload.pack import build_overflow
 from pwnable_lab.sandbox import (
     SandboxLimits,
     confirm_return_offset,
     require_sandbox_boundary,
+    verify_payload,
 )
 
 
@@ -54,6 +56,23 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="cyclic 패턴 길이(생략 시 PLAB_SANDBOX_PATTERN_LENGTH).",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="오프셋 확정 대신 ret2win payload 를 주입해 익스 성공을 검증한다.",
+    )
+    parser.add_argument("--offset", type=int, default=None, help="--verify: 반환 오프셋")
+    parser.add_argument(
+        "--target", type=int, default=None, help="--verify: 점프할 대상 주소(정수)"
+    )
+    parser.add_argument("--bits", type=int, default=64, help="--verify: 32 또는 64")
+    parser.add_argument(
+        "--marker",
+        action="append",
+        default=[],
+        dest="markers",
+        help="--verify: stdout 에 나타나면 성공으로 볼 문자열(반복 가능)",
     )
     return parser
 
@@ -102,20 +121,37 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[sandbox-cli] 입력 오류: {exc}", file=sys.stderr)
         return 3
 
-    length = args.pattern_length or settings.sandbox_pattern_length
     limits = SandboxLimits(
         wall_seconds=settings.sandbox_wall_seconds,
         cpu_seconds=settings.sandbox_cpu_seconds,
         address_space_bytes=settings.sandbox_address_space_bytes,
     )
     try:
-        print(
-            f"[sandbox-cli] confirm_return_offset 실행 (pattern_length={length})",
-            file=sys.stderr,
-        )
-        result = confirm_return_offset(
-            binary_path, pattern_length=length, limits=limits
-        )
+        if args.verify:
+            if args.offset is None or args.target is None:
+                print(
+                    "[sandbox-cli] --verify 는 --offset 과 --target 이 필요합니다.",
+                    file=sys.stderr,
+                )
+                return 3
+            payload = build_overflow(args.offset, args.target, bits=args.bits)
+            print(
+                f"[sandbox-cli] verify_payload 실행 "
+                f"(offset={args.offset}, target=0x{args.target:x})",
+                file=sys.stderr,
+            )
+            result = verify_payload(
+                binary_path, payload, success_markers=args.markers, limits=limits
+            )
+        else:
+            length = args.pattern_length or settings.sandbox_pattern_length
+            print(
+                f"[sandbox-cli] confirm_return_offset 실행 (pattern_length={length})",
+                file=sys.stderr,
+            )
+            result = confirm_return_offset(
+                binary_path, pattern_length=length, limits=limits
+            )
     except SandboxError as exc:
         print(f"[sandbox-cli] 샌드박스 오류: {exc}", file=sys.stderr)
         return 2
