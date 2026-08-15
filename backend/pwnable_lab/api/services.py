@@ -28,7 +28,7 @@ from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import ElfImage, parse_elf
-from pwnable_lab.errors import AnalysisError, SandboxError
+from pwnable_lab.errors import AnalysisError
 from pwnable_lab.formats import ArtifactFormat, detect_format
 from pwnable_lab.pe.analyzer import (
     disassemble_pe,
@@ -38,7 +38,11 @@ from pwnable_lab.pe.analyzer import (
     scan_pe_imports,
 )
 from pwnable_lab.pe.parser import parse_pe
-from pwnable_lab.sandbox import SandboxLimits, confirm_return_offset
+from pwnable_lab.sandbox import (
+    SandboxLimits,
+    confirm_return_offset,
+    require_sandbox_boundary,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -306,18 +310,7 @@ class AnalysisService:
     def _require_sandbox_enabled(self) -> None:
         """동적 실행 게이트 + 격리 마커 확인. 통과 못 하면 ``SandboxError``(→503)."""
 
-        if not self.settings.sandbox_execution_enabled:
-            raise SandboxError(
-                "동적 오프셋 확정(sandbox 실행)이 이 배포에서 비활성화돼 있습니다. "
-                "network-disabled 격리 컨테이너 안에서 "
-                "PLAB_SANDBOX_EXECUTION_ENABLED=1 로만 활성화하세요."
-            )
-        marker = self.settings.sandbox_isolation_marker
-        if marker and not os.path.exists(marker):
-            raise SandboxError(
-                "격리 마커를 찾을 수 없어 실행을 거부합니다: "
-                f"{marker} (컨테이너 경계 미확인)."
-            )
+        require_sandbox_boundary(self.settings)
 
     @staticmethod
     def _materialize_executable(data: bytes) -> str:
