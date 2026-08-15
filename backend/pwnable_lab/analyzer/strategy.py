@@ -824,6 +824,17 @@ def _skeleton_generic(context: _Context) -> str:
 _OFFSET_LINE = re.compile(r"^offset = .*$", re.MULTILINE)
 
 
+def ret2win_target(image: ElfImage) -> tuple[str, int] | None:
+    """최상위 win/셸 함수 후보 ``(name, addr)`` 를 반환한다(없으면 None).
+
+    non-PIE 에서는 이 주소가 정확한 절대 주소라 곧바로 ret2win 타깃으로 쓸 수
+    있다. auto-exploit 자동 검증이 사용한다.
+    """
+
+    candidates = _win_functions(image)
+    return candidates[0] if candidates else None
+
+
 def inject_confirmed_offset(
     strategy: dict,
     offset: int,
