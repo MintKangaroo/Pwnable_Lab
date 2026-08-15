@@ -815,3 +815,48 @@ def _skeleton_generic(context: _Context) -> str:
         "payload = b'A' * 64  # TODO\n"
         "p.sendline(payload)\np.interactive()\n"
     )
+
+
+# --- 동적 확정 오프셋 주입 --------------------------------------------------
+
+# 스택 오버플로 오프셋 라인만 매칭한다. `fmt_offset = ...`(포맷스트링 인자
+# 인덱스)은 접두사가 달라 매칭되지 않으므로 건드리지 않는다.
+_OFFSET_LINE = re.compile(r"^offset = .*$", re.MULTILINE)
+
+
+def inject_confirmed_offset(
+    strategy: dict,
+    offset: int,
+    *,
+    method: str | None = None,
+    source: str = "dynamic-sandbox",
+) -> dict:
+    """정적 전략의 pwntools 스켈레톤에 동적으로 확정된 오프셋을 주입한다.
+
+    각 경로의 ``offset = ...`` 라인(스택 오버플로 오프셋)을 확정값으로 교체하고,
+    상위 메타데이터에 확정 사실을 기록한다. 포맷스트링 경로의 ``fmt_offset`` 은
+    다른 개념이라 건드리지 않는다. 원본 dict 는 변형하지 않고 새 dict 를 반환한다.
+    """
+
+    note = f"offset = {offset}  # verified: 동적 샌드박스 확정 (cyclic_find)"
+    if method:
+        note += f" [method={method}]"
+
+    updated = dict(strategy)
+    new_paths: list[dict] = []
+    injected_ids: list[str] = []
+    for path in strategy.get("paths", []):
+        path = dict(path)
+        skeleton = path.get("pwntools")
+        if isinstance(skeleton, str) and _OFFSET_LINE.search(skeleton):
+            path["pwntools"] = _OFFSET_LINE.sub(lambda _m: note, skeleton, count=1)
+            path["offset_verified"] = True
+            injected_ids.append(path.get("id", ""))
+        new_paths.append(path)
+
+    updated["paths"] = new_paths
+    updated["confirmed_offset"] = offset
+    updated["offset_verification"] = "verified"
+    updated["offset_source"] = source
+    updated["offset_injected_paths"] = injected_ids
+    return updated

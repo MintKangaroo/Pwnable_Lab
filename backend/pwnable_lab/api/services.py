@@ -20,7 +20,7 @@ from pwnable_lab.analyzer.gadgets import (
     simulate_chain,
 )
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
-from pwnable_lab.analyzer.strategy import analyze_strategy
+from pwnable_lab.analyzer.strategy import analyze_strategy, inject_confirmed_offset
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
@@ -280,13 +280,45 @@ class AnalysisService:
            사용해야 한다.
         """
 
+        return self._run_offset_confirmation(
+            data,
+            pattern_length=pattern_length,
+            feature="Dynamic offset confirmation",
+        )
+
+    def auto_exploit(self, data: bytes, *, pattern_length: int | None = None) -> dict:
+        """정적 전략 + 동적 오프셋 확정을 결합한 exploit 초안 파이프라인.
+
+        1. ``exploit_strategy`` 로 후보 경로와 pwntools 스켈레톤을 만든다(정적).
+        2. 격리 러너로 반환 주소 오프셋을 실제 실행으로 확정한다(동적).
+        3. 확정된 오프셋을 각 스켈레톤에 주입해 "실행 가능한" 초안으로 승격한다.
+
+        오프셋 확정에 실패하면 정적 스켈레톤을 그대로 두고 ``confirmation`` 에
+        관측 근거를 담아 반환한다(예외 아님).
+        """
+
+        strategy = self.exploit_strategy(data)
+        confirmation = self._run_offset_confirmation(
+            data, pattern_length=pattern_length, feature="Auto-exploit"
+        )
+        if confirmation.get("confirmed") and confirmation.get("offset") is not None:
+            strategy = inject_confirmed_offset(
+                strategy,
+                int(confirmation["offset"]),
+                method=confirmation.get("method"),
+            )
+        return {"strategy": strategy, "confirmation": confirmation}
+
+    def _run_offset_confirmation(
+        self, data: bytes, *, pattern_length: int | None, feature: str
+    ) -> dict:
+        """게이트/포맷 검증 후 설정된 executor 로 오프셋 확정을 수행한다."""
+
         # 마스터 게이트(활성화 여부)는 항상 API 계층에서 검증 → 비활성 시 503.
         # 격리 마커는 "실제 실행이 일어나는 곳"에서 확인한다: in-process 는
         # executor 내부에서, container 는 컨테이너 안의 CLI 가 검증한다.
         require_sandbox_enabled(self.settings)
-        self._require_format(
-            data, ArtifactFormat.ELF, feature="Dynamic offset confirmation"
-        )
+        self._require_format(data, ArtifactFormat.ELF, feature=feature)
 
         length = pattern_length or self.settings.sandbox_pattern_length
         logger.warning(
