@@ -13,6 +13,7 @@
    직접 연결하지 말 것(현재 기본적으로 연결돼 있지 않다).
 """
 
+from pwnable_lab.sandbox.gate import require_sandbox_boundary
 from pwnable_lab.sandbox.runner import (
     CrashObservation,
     OffsetConfirmation,
@@ -26,5 +27,6 @@ __all__ = [
     "OffsetConfirmation",
     "SandboxLimits",
     "confirm_return_offset",
+    "require_sandbox_boundary",
     "run_with_input",
 ]
