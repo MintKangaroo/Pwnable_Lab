@@ -12,6 +12,7 @@ from pwnable_lab.errors import (
     ParseError,
     PayloadTooLargeError,
     PwnableLabError,
+    SandboxError,
     ToolUnavailableError,
     UnsupportedFormatError,
 )
@@ -22,6 +23,8 @@ _STATUS = {
     ParseError: 422,
     NotFoundError: 404,
     ToolUnavailableError: 503,
+    # 동적 샌드박스 미가용/비활성/플랫폼 미지원 → 서비스 사용 불가.
+    SandboxError: 503,
     ChallengeError: 400,
     AnalysisError: 400,
 }

@@ -42,6 +42,24 @@ class Settings(BaseSettings):
     # 페이로드 도구 한계
     max_cyclic_length: int = 65536
 
+    # 동적 오프셋 확정 샌드박스 (Phase 6A)
+    #
+    # .. warning::
+    #    이 기능을 켜면 서버가 **신뢰할 수 없는 업로드 바이너리를 실제로 실행**한다.
+    #    반드시 network-disabled 일회용 컨테이너(nsjail/gVisor 등) 경계 안에서만
+    #    ``PLAB_SANDBOX_EXECUTION_ENABLED=1`` 로 활성화할 것. 기본값은 비활성이며,
+    #    이 플래그를 켜는 행위 자체가 "격리 경계를 갖췄다"는 운영자의 명시적 확인이다.
+    sandbox_execution_enabled: bool = False
+    # 격리 마커 경로. 비어 있지 않으면 실행 직전 이 경로가 존재해야만 러너가
+    # 동작한다(컨테이너 이미지가 생성하는 파일을 지정해 무방비 노출을 한 겹 더 차단).
+    sandbox_isolation_marker: str = ""
+    sandbox_wall_seconds: float = Field(default=5.0, gt=0, le=60)
+    sandbox_cpu_seconds: int = Field(default=2, gt=0, le=30)
+    sandbox_address_space_bytes: int = Field(
+        default=512 * 1024 * 1024, gt=0, le=4 * 1024 * 1024 * 1024
+    )
+    sandbox_pattern_length: int = Field(default=512, ge=8, le=65536)
+
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 

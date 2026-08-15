@@ -217,6 +217,23 @@ def binary_strategy(
     return service.exploit_strategy(repo.load_bytes(sha256))
 
 
+@router.post("/{sha256}/confirm-offset")
+async def binary_confirm_offset(
+    sha256: str,
+    pattern_length: int | None = Query(default=None, ge=8, le=65536),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """동적으로 반환 주소 오프셋을 확정한다(격리 샌드박스에서 실제 실행).
+
+    기본 비활성. 배포가 ``PLAB_SANDBOX_EXECUTION_ENABLED`` 를 켜지 않았으면 503.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.confirm_offset, data, pattern_length=pattern_length
+    )
+
+
 @router.get("/{sha256}/functions/{address}/pseudocode")
 def binary_function_pseudocode(
     sha256: str,

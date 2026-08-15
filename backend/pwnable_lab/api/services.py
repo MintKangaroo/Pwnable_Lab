@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+import os
+import stat
+import tempfile
 from dataclasses import asdict, dataclass
 
 from pwnable_lab.analyzer.checksec import run_checksec
@@ -24,7 +28,7 @@ from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import ElfImage, parse_elf
-from pwnable_lab.errors import AnalysisError
+from pwnable_lab.errors import AnalysisError, SandboxError
 from pwnable_lab.formats import ArtifactFormat, detect_format
 from pwnable_lab.pe.analyzer import (
     disassemble_pe,
@@ -34,6 +38,9 @@ from pwnable_lab.pe.analyzer import (
     scan_pe_imports,
 )
 from pwnable_lab.pe.parser import parse_pe
+from pwnable_lab.sandbox import SandboxLimits, confirm_return_offset
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -259,6 +266,75 @@ class AnalysisService:
             parse_elf(data),
             max_instructions=self.settings.max_disasm_instructions,
         )
+
+    def confirm_offset(self, data: bytes, *, pattern_length: int | None = None) -> dict:
+        """업로드 바이너리를 격리 러너로 실제 실행해 반환 주소 오프셋을 확정한다.
+
+        정적 ``exploit_strategy`` 의 추정 오프셋과 달리, cyclic 패턴을 주입해
+        관측된 크래시로부터 역산한 ``verified`` 오프셋을 돌려준다.
+
+        .. warning::
+           신뢰할 수 없는 바이너리를 **실행**한다. 기본 비활성이며
+           ``PLAB_SANDBOX_EXECUTION_ENABLED=1`` + 격리 컨테이너 경계에서만
+           사용해야 한다.
+        """
+
+        self._require_sandbox_enabled()
+        self._require_format(data, ArtifactFormat.ELF, feature="Dynamic offset confirmation")
+
+        length = pattern_length or self.settings.sandbox_pattern_length
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize_executable(data)
+        try:
+            logger.warning(
+                "sandbox: executing untrusted binary for offset confirmation "
+                "(pattern_length=%d)",
+                length,
+            )
+            result = confirm_return_offset(path, pattern_length=length, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        return result.as_dict()
+
+    def _require_sandbox_enabled(self) -> None:
+        """동적 실행 게이트 + 격리 마커 확인. 통과 못 하면 ``SandboxError``(→503)."""
+
+        if not self.settings.sandbox_execution_enabled:
+            raise SandboxError(
+                "동적 오프셋 확정(sandbox 실행)이 이 배포에서 비활성화돼 있습니다. "
+                "network-disabled 격리 컨테이너 안에서 "
+                "PLAB_SANDBOX_EXECUTION_ENABLED=1 로만 활성화하세요."
+            )
+        marker = self.settings.sandbox_isolation_marker
+        if marker and not os.path.exists(marker):
+            raise SandboxError(
+                "격리 마커를 찾을 수 없어 실행을 거부합니다: "
+                f"{marker} (컨테이너 경계 미확인)."
+            )
+
+    @staticmethod
+    def _materialize_executable(data: bytes) -> str:
+        """업로드 바이트를 소유자 전용(0o700) 임시 실행파일로 기록하고 경로 반환."""
+
+        fd, path = tempfile.mkstemp(prefix="plab-sbx-")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+            os.chmod(path, stat.S_IRWXU)  # 0o700, 소유자만 rwx
+        except OSError:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+        return path
 
     def pseudo_c(self, data: bytes, *, address: int) -> dict:
         """단일 함수의 규칙 기반 pseudo-C 초안."""
