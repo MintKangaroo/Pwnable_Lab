@@ -252,6 +252,21 @@ async def binary_auto_exploit(
     )
 
 
+@router.post("/{sha256}/auto-ret2libc")
+async def binary_auto_ret2libc(
+    sha256: str,
+    offset: int = Query(..., ge=0, le=1_048_576),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """완전 자동 2단계 ret2libc: leak → libc base → system("/bin/sh") (amd64, in-process).
+
+    기본 비활성(샌드박스 실행 게이트) — 503 가능. 컨테이너 executor 는 미지원.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.auto_ret2libc, data, offset=offset)
+
+
 @router.post("/{sha256}/leak")
 async def binary_leak(
     sha256: str,

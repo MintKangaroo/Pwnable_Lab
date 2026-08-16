@@ -15,7 +15,10 @@
 
 PwnPilot은 ELF, Windows PE/EXE, raw binary의 구조와 보호 기법, 공격 표면,
 디스어셈블리 재료를 한 Workspace에서 검토하는 교육용 분석 플랫폼입니다.
-업로드한 바이너리는 웹/API 호스트에서 실행하지 않습니다.
+정적 분석은 업로드한 바이너리를 웹/API 호스트에서 실행하지 않습니다.
+동적 익스 검증(Phase 6 auto-exploit sandbox)은 **기본 비활성**이며, 명시적으로
+켠 경우에만 network-disabled 일회용 컨테이너 안에서 바이너리를 실행합니다
+([`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md)).
 
 > 교육용 CTF, 사용자가 소유한 바이너리, 명시적으로 허가받은 보안 분석에만 사용하세요.
 > 임의 인터넷 표적 탐색, 스캔, 대량 공격 기능은 프로젝트 범위가 아닙니다.
@@ -172,6 +175,29 @@ ZIP, TAR, gzip, 7-Zip, RAR 등 압축/아카이브 입력은 기본 정책상 �
   크기를 근사 (진짜 디컴파일러가 아니며 결과는 inferred)
 - 모든 결과는 취약점을 확정하지 않고 정적 근거만 사용하며 바이너리를 실행하지 않음
 
+### Phase 6 auto-exploit sandbox (opt-in, 기본 비활성)
+
+정적 전략의 **추정**을 넘어 격리 샌드박스에서 **실제 실행으로 검증**하는 동적
+파이프라인. 신뢰할 수 없는 바이너리를 실행하므로 `PLAB_SANDBOX_EXECUTION_ENABLED`
+로 명시적으로 켜야 하며, 프로덕션에서는 `PLAB_SANDBOX_EXECUTOR=container` 로
+network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop ALL
+--cap-add SYS_PTRACE …`, 선택적으로 gVisor)에서만 실행합니다. 상세는
+[`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md).
+
+- **오프셋 확정**: cyclic 주입 → 크래시 관측 → `RIP`/스택 반환 슬롯에서
+  `cyclic_find` 로 반환 오프셋을 `verified` 로 확정 (정적 추정이 실패하는 gcc
+  간접 버퍼 관용구도 커버)
+- **auto-exploit**: 정적 전략 + 동적 확정 오프셋을 pwntools 스켈레톤에 주입하고,
+  ret2win(정렬 재시도) → ret2system(pop rdi→/bin/sh→system 자동 구성)을 순서대로
+  **무입력 자동 검증**
+- **익스 검증**: 구성한 payload/ROP 체인을 실제 주입해 제어 흐름 탈취를 확인
+  (마커 매치 또는 control-transfer)
+- **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,
+  멀티스테이지 러너(출력→입력)로 libc base 계산 후 `system("/bin/sh")` 까지
+  자동 구성 — libc/PIE ASLR 격파 (in-process, amd64)
+- 안전 경계: 프로세스 rlimit(CPU/AS/NPROC/FSIZE/CORE)·wall-clock 워치독·
+  프로세스그룹 SIGKILL + 컨테이너 격리. 게이트/격리 마커 미충족 시 `503`
+
 ### 재사용된 정적 분석 기능
 
 | 분석 | 현재 내용 |
@@ -254,8 +280,10 @@ docker compose -f docker-compose.dev.yml up --build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 ```
 
-현재 Compose는 정적 분석 control plane입니다. 아직 sandbox-runner나 업로드 바이너리
-실행 기능을 포함하지 않습니다.
+기본 Compose는 정적 분석 control plane이며 업로드 바이너리를 실행하지 않습니다.
+동적 익스 검증(Phase 6)은 기본 비활성이고, 켤 경우 별도의 하드닝 일회용 샌드박스
+컨테이너(`sandbox/Dockerfile`, `sandbox/run.sh`)에서만 실행됩니다
+([`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md)).
 
 ## 주요 API
 
@@ -289,6 +317,11 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/gadgets` | paginated ROP gadget metadata와 필터 |
 | `POST` | `/binaries/{binary_id}/rop/simulate` | 제한된 정적 chain layout 모델 |
 | `GET` | `/binaries/{binary_id}/strategy` | 근거 기반 후보 exploit 경로와 pwntools 초안 (ELF 전용) |
+| `POST` | `/binaries/{binary_id}/confirm-offset` | 동적 반환 오프셋 확정 (샌드박스, 기본 비활성 → 503) |
+| `POST` | `/binaries/{binary_id}/auto-exploit` | 전략 + 확정 오프셋 주입 + ret2win/ret2system 자동 검증 |
+| `POST` | `/binaries/{binary_id}/verify-exploit` | 구성한 payload/ROP 체인 주입으로 익스 검증 |
+| `POST` | `/binaries/{binary_id}/leak` | `puts(puts@got)` 런타임 libc 주소 유출 |
+| `POST` | `/binaries/{binary_id}/auto-ret2libc` | 완전 자동 2단계 ret2libc (leak→base→system, amd64) |
 | `GET` | `/binaries/{binary_id}/functions/{address}/pseudocode` | 함수 규칙 기반 pseudo-C 초안 |
 | `GET` | `/binaries/{binary_id}/strings` | 문자열 |
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
