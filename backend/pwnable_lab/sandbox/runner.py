@@ -27,6 +27,7 @@ import platform
 import resource
 import signal
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from pwnable_lab.errors import SandboxError
@@ -580,3 +581,170 @@ def verify_payload(
         payload_length=len(payload),
         observation=observation,
     )
+
+
+# --- 멀티스테이지(leak → 2단계 payload) 러너 ------------------------------
+
+
+def run_two_stage(
+    binary_path: str,
+    make_second: Callable[[bytes], bytes],
+    *,
+    prelude: bytes = b"",
+    limits: SandboxLimits | None = None,
+) -> tuple[CrashObservation, bytes]:
+    """대상이 유출한 값을 읽어 2단계 payload 를 만들어 되쏘는 상호작용 러너.
+
+    흐름: exec → (선택) ``prelude`` 전송 → stdout 첫 줄(유출) 수신 →
+    ``make_second(first_line_bytes)`` 로 2단계 payload 구성 → 전송 → 종료까지 관측.
+    leak→ret2libc 처럼 "출력을 읽고 그 값으로 다음 입력을 만드는" 익스의 기반이다.
+
+    반환: ``(관측결과, 유출된_첫_줄_bytes)``. 첫 줄을 받기 전에 종료/타임아웃하면
+    2단계는 보내지 않으며 유출 bytes 는 비어 있을 수 있다(대상 stdout 버퍼링 등).
+
+    .. note::
+       대상 stdout 이 full-buffered 면 유출이 종료 전까지 flush 되지 않아 이 방식이
+       동작하지 않는다(CTF 바이너리는 보통 ``setvbuf`` 로 무버퍼라 동작). stderr 는
+       버린다.
+    """
+
+    _require_supported_platform()
+    limits = limits or SandboxLimits()
+    limits.validate()
+    if not os.path.isfile(binary_path):
+        raise SandboxError(f"실행 대상 파일이 없습니다: {binary_path}")
+
+    lib = _libc()
+    in_read, in_write = os.pipe()
+    out_read, out_write = os.pipe()
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - 자식 프로세스
+        try:
+            os.setsid()
+            os.close(in_write)
+            os.close(out_read)
+            os.dup2(in_read, 0)
+            os.close(in_read)
+            os.dup2(out_write, 1)
+            os.close(out_write)
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, 2)
+            _apply_child_limits(limits)
+            lib.ptrace(_PTRACE_TRACEME, 0, None, None)
+            os.execv(binary_path, [binary_path])
+        except BaseException:
+            os._exit(127)
+        os._exit(127)
+
+    os.close(in_read)
+    os.close(out_write)
+    os.set_blocking(out_read, False)
+    if prelude:
+        try:
+            os.write(in_write, prelude)
+        except BrokenPipeError:
+            pass
+    try:
+        return _supervise_two_stage(lib, pid, limits, in_write, out_read, make_second)
+    finally:
+        for fd in (in_write, out_read):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def _supervise_two_stage(
+    lib: ctypes.CDLL,
+    pid: int,
+    limits: SandboxLimits,
+    in_write: int,
+    out_fd: int,
+    make_second: Callable[[bytes], bytes],
+) -> tuple[CrashObservation, bytes]:
+    deadline = time.monotonic() + limits.wall_seconds
+    stdout_buf = bytearray()
+    first_line: bytes | None = None
+    stage2_sent = False
+
+    def drain() -> None:
+        cap = limits.capture_stdout_bytes
+        while len(stdout_buf) < cap:
+            try:
+                chunk = os.read(out_fd, min(4096, cap - len(stdout_buf)))
+            except (BlockingIOError, OSError):
+                break
+            if not chunk:
+                break
+            stdout_buf.extend(chunk)
+
+    def maybe_stage2() -> None:
+        nonlocal first_line, stage2_sent
+        if stage2_sent or b"\n" not in stdout_buf:
+            return
+        first_line = bytes(stdout_buf).split(b"\n", 1)[0]
+        stage2_sent = True
+        try:
+            os.write(in_write, make_second(first_line))
+        except (BrokenPipeError, OSError):
+            pass
+        try:
+            os.close(in_write)
+        except OSError:
+            pass
+
+    def finish(observation: CrashObservation) -> tuple[CrashObservation, bytes]:
+        drain()
+        maybe_stage2()
+        drain()
+        observation.stdout = bytes(stdout_buf)
+        return observation, (first_line or b"")
+
+    if not _wait_stop(pid, deadline):
+        return finish(
+            _kill_group(pid, timed_out=True, note="exec 정지를 기다리다 타임아웃")
+        )
+    lib.ptrace(_PTRACE_CONT, pid, None, None)
+
+    while True:
+        drain()
+        maybe_stage2()
+        if time.monotonic() > deadline:
+            return finish(_kill_group(pid, timed_out=True, note="실행 wall-clock 초과"))
+        try:
+            waited, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return finish(
+                CrashObservation(
+                    crashed=False, timed_out=False, signal=None, signal_name=None,
+                    rip=None, rsp=None, note="자식이 이미 회수됨",
+                )
+            )
+        if waited == 0:
+            time.sleep(0.002)
+            continue
+        if os.WIFEXITED(status):
+            return finish(
+                CrashObservation(
+                    crashed=False, timed_out=False, signal=None, signal_name=None,
+                    rip=None, rsp=None, exit_code=os.WEXITSTATUS(status),
+                    note="크래시 없이 정상 종료",
+                )
+            )
+        if os.WIFSIGNALED(status):
+            sig = os.WTERMSIG(status)
+            return finish(
+                CrashObservation(
+                    crashed=True, timed_out=False, signal=sig,
+                    signal_name=signal.Signals(sig).name, rip=None, rsp=None,
+                    note="ptrace 외부에서 시그널 종료",
+                )
+            )
+        if os.WIFSTOPPED(status):
+            sig = os.WSTOPSIG(status)
+            if sig == signal.SIGTRAP:
+                lib.ptrace(_PTRACE_CONT, pid, None, None)
+                continue
+            observation = _read_crash(lib, pid, sig, limits)
+            _kill_group(pid, timed_out=False, note=None)
+            return finish(observation)
