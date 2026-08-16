@@ -30,6 +30,7 @@ from pwnable_lab.sandbox.runner import (
     OffsetConfirmation,
     SandboxLimits,
     confirm_return_offset,
+    run_two_stage,
     run_with_input,
     verify_payload,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "confirm_offset_in_container",
     "confirm_offset_in_process",
     "confirm_return_offset",
+    "run_two_stage",
     "require_isolation_marker",
     "require_sandbox_boundary",
     "require_sandbox_enabled",
