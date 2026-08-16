@@ -852,6 +852,74 @@ def find_ret_gadget(image: ElfImage) -> int | None:
     return None
 
 
+def binary_exec_range(image: ElfImage) -> tuple[int, int] | None:
+    """바이너리 자체 실행코드의 가상주소 범위 ``(lo, hi)``. 없으면 None.
+
+    크래시 RIP 가 이 범위 밖(예: libc)에 있으면 제어가 외부 라이브러리 함수로
+    이전됐다는 신호다(ret2system 판정에 사용).
+    """
+
+    lo = hi = None
+    for section in image.sections:
+        if not section.executable or not section.addr or section.size <= 0:
+            continue
+        start, end = section.addr, section.addr + section.size
+        lo = start if lo is None else min(lo, start)
+        hi = end if hi is None else max(hi, end)
+    return None if lo is None else (lo, hi)
+
+
+def find_binsh(image: ElfImage) -> int | None:
+    """``/bin/sh`` 문자열의 가상주소를 찾는다(주소 있는 섹션 우선). 없으면 None."""
+
+    needle = b"/bin/sh\x00"
+    for section in image.sections:
+        if not section.addr or section.size <= 0:
+            continue
+        blob = image.data[section.offset : section.offset + section.size]
+        idx = blob.find(needle)
+        if idx != -1:
+            return section.addr + idx
+    return None
+
+
+def _system_address(image: ElfImage) -> int | None:
+    """system 의 호출 가능 주소(비 PIE): PLT stub 우선, 없으면 정의된 심볼."""
+
+    report = analyze_got_plt(image)
+    for entry in report.plt_entries:
+        if entry.symbol == "system" and entry.address:
+            return entry.address
+    sym = image.symbol("system")
+    if sym and sym.addr:
+        return sym.addr
+    return None
+
+
+def ret2system_plan(image: ElfImage) -> dict | None:
+    """amd64 ret2system 체인 구성요소(pop rdi, /bin/sh, system)를 정적으로 수집.
+
+    셋을 모두 non-PIE 절대주소로 찾으면 ``{"pop_rdi", "binsh", "system"}`` 를
+    반환한다. 하나라도 없으면 None(작은 바이너리에는 ``pop rdi ; ret`` 가젯이
+    없을 수 있음 — 그 경우 자동 구성 불가). 32-bit 는 호출규약이 달라 대상 아님.
+    """
+
+    if (image.bits or 64) != 64:
+        return None
+    gadgets = scan_gadgets(image).gadgets
+    pop_rdi = None
+    for gadget in gadgets:
+        body = [t.strip().lower() for t in gadget.instructions]
+        if body and body[0] == "pop rdi" and body[-1].startswith("ret"):
+            if pop_rdi is None or len(body) < len(pop_rdi.instructions):
+                pop_rdi = gadget
+    binsh = find_binsh(image)
+    system = _system_address(image)
+    if pop_rdi is None or binsh is None or system is None:
+        return None
+    return {"pop_rdi": pop_rdi.address, "binsh": binsh, "system": system}
+
+
 def inject_confirmed_offset(
     strategy: dict,
     offset: int,
