@@ -252,6 +252,22 @@ async def binary_auto_exploit(
     )
 
 
+@router.post("/{sha256}/leak")
+async def binary_leak(
+    sha256: str,
+    offset: int = Query(..., ge=0, le=1_048_576),
+    bits: int | None = Query(default=None),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """puts(puts@got) → exit 체인으로 런타임 libc 주소를 유출한다(ASLR 우회 1단계).
+
+    기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.verify_leak, data, offset=offset)
+
+
 @router.post("/{sha256}/verify-exploit")
 async def binary_verify_exploit(
     sha256: str,

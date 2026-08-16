@@ -104,6 +104,9 @@ class CrashObservation:
             "exit_code": self.exit_code,
             "note": self.note,
             "stdout": self.stdout.decode("utf-8", "replace"),
+            # 원시 바이트(주소 leak 등 비텍스트 출력이 JSON/컨테이너 경계를
+            # 넘어도 손실되지 않도록 hex 로도 보존).
+            "stdout_hex": self.stdout.hex(),
         }
 
 

