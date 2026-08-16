@@ -22,7 +22,7 @@ import tempfile
 from typing import Protocol
 
 from pwnable_lab.errors import SandboxError
-from pwnable_lab.payload.pack import build_overflow
+from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox.gate import require_sandbox_boundary
 from pwnable_lab.sandbox.runner import (
     SandboxLimits,
@@ -94,13 +94,16 @@ def verify_exploit_in_process(
     offset: int,
     target: int,
     bits: int,
+    chain: list[int] | tuple[int, ...] = (),
     markers: list[str] | tuple[str, ...] = (),
     settings: _ExecutorSettings,
 ) -> dict:
-    """현재 프로세스에서 ret2win payload 를 주입해 익스 성공을 검증한다."""
+    """현재 프로세스에서 ret2win/ROP payload 를 주입해 익스 성공을 검증한다."""
 
     require_sandbox_boundary(settings)
-    payload = build_overflow(offset, target, bits=bits)
+    payload = build_overflow(
+        offset, target, bits=bits, chain=[RopStep(a) for a in chain]
+    )
     path = _materialize_executable(data)
     try:
         result = verify_payload(
@@ -120,10 +123,11 @@ def verify_exploit_in_container(
     offset: int,
     target: int,
     bits: int,
+    chain: list[int] | tuple[int, ...] = (),
     markers: list[str] | tuple[str, ...] = (),
     settings: _ExecutorSettings,
 ) -> dict:
-    """일회용 컨테이너에서 ret2win payload 를 주입해 익스 성공을 검증한다."""
+    """일회용 컨테이너에서 ret2win/ROP payload 를 주입해 익스 성공을 검증한다."""
 
     cli_args = [
         "--stdin",
@@ -132,6 +136,8 @@ def verify_exploit_in_container(
         "--target", str(target),
         "--bits", str(bits),
     ]
+    for link in chain:
+        cli_args += ["--chain", str(link)]
     for marker in markers:
         cli_args += ["--marker", marker]
     return _run_container(settings, cli_args, data)

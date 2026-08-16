@@ -835,6 +835,23 @@ def ret2win_target(image: ElfImage) -> tuple[str, int] | None:
     return candidates[0] if candidates else None
 
 
+def find_ret_gadget(image: ElfImage) -> int | None:
+    """실행 가능 섹션에서 단독 ``ret``(0xC3) 바이트의 가상주소를 찾는다.
+
+    amd64 스택 정렬(movaps)용 한 슬롯 패딩 가젯. non-PIE 에서는 그대로 쓸 수 있는
+    절대주소다. 없으면 None.
+    """
+
+    for section in image.sections:
+        if not section.executable or not section.addr or section.size <= 0:
+            continue
+        blob = image.data[section.offset : section.offset + section.size]
+        idx = blob.find(b"\xc3")
+        if idx != -1:
+            return section.addr + idx
+    return None
+
+
 def inject_confirmed_offset(
     strategy: dict,
     offset: int,
