@@ -22,6 +22,7 @@ from pwnable_lab.analyzer.gadgets import (
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
+    find_ret_gadget,
     inject_confirmed_offset,
     ret2win_target,
 )
@@ -335,15 +336,30 @@ class AnalysisService:
         if target is None:
             return {"attempted": False, "reason": "no-ret2win-target"}
         name, addr = target
-        result = self.verify_exploit(
-            data, offset=offset, target=addr, bits=image.bits or 64
-        )
+        bits = image.bits or 64
+
+        # 1) 직접 ret2win: A*offset + p(win).
+        result = self.verify_exploit(data, offset=offset, target=addr, bits=bits)
+        alignment = False
+
+        # 2) 실패하고 ret 가젯이 있으면 정렬(movaps)용 ret 를 한 슬롯 끼워 재시도:
+        #    A*offset + p(ret) + p(win).
+        if not result.get("succeeded") and bits == 64:
+            ret = find_ret_gadget(image)
+            if ret is not None:
+                retry = self.verify_exploit(
+                    data, offset=offset, target=ret, bits=bits, chain=[addr]
+                )
+                if retry.get("succeeded"):
+                    result, alignment = retry, True
+
         return {
             "attempted": True,
             "technique": "ret2win",
             "target_name": name,
             "target_addr": addr,
             "target_addr_hex": f"0x{addr:x}",
+            "alignment_ret_gadget": alignment,
             "succeeded": result.get("succeeded", False),
             "reason": result.get("reason"),
             "result": result,
@@ -356,37 +372,39 @@ class AnalysisService:
         offset: int,
         target: int,
         bits: int | None = None,
+        chain: list[int] | tuple[int, ...] = (),
         markers: list[str] | tuple[str, ...] = (),
     ) -> dict:
-        """구성한 ret2win payload 를 격리 샌드박스에 주입해 익스 성공을 검증한다.
+        """구성한 ret2win/ROP payload 를 격리 샌드박스에 주입해 익스 성공을 검증한다.
 
-        ``payload = b'A'*offset + p{bits}(target)`` 를 실제로 보내, 크래시 없이
-        제어가 이전됐는지(또는 ``markers`` 가 stdout 에 나타나는지)로 판정한다.
+        ``payload = b'A'*offset + p{bits}(target) + Σ p{bits}(chain)`` 를 실제로
+        보내, 크래시 없이 제어가 이전됐는지(또는 ``markers`` 가 stdout 에 나타나는지)
+        로 판정한다. ``chain`` 으로 ret2system(pop rdi→/bin/sh→system) 같은 다단계
+        ROP 나 정렬용 ret 가젯을 표현할 수 있다.
         """
 
         require_sandbox_enabled(self.settings)
         self._require_format(data, ArtifactFormat.ELF, feature="Exploit verification")
         resolved_bits = bits or (parse_elf(data).bits or 64)
         logger.warning(
-            "sandbox: verifying exploit (executor=%s, offset=%d, target=0x%x)",
+            "sandbox: verifying exploit "
+            "(executor=%s, offset=%d, target=0x%x, chain=%d)",
             self.settings.sandbox_executor,
             offset,
             target,
+            len(chain),
         )
-        if self.settings.sandbox_executor == "container":
-            return verify_exploit_in_container(
-                data,
-                offset=offset,
-                target=target,
-                bits=resolved_bits,
-                markers=markers,
-                settings=self.settings,
-            )
-        return verify_exploit_in_process(
+        executor = (
+            verify_exploit_in_container
+            if self.settings.sandbox_executor == "container"
+            else verify_exploit_in_process
+        )
+        return executor(
             data,
             offset=offset,
             target=target,
             bits=resolved_bits,
+            chain=chain,
             markers=markers,
             settings=self.settings,
         )

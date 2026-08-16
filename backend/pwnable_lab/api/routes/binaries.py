@@ -258,20 +258,28 @@ async def binary_verify_exploit(
     offset: int = Query(..., ge=0, le=1_048_576),
     target: str = Query(..., max_length=32, description="점프 대상 주소(0x… 또는 10진)"),
     bits: int | None = Query(default=None),
+    chain: list[str] = Query(default=[], max_length=32),
     marker: list[str] = Query(default=[], max_length=64),
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
 ) -> dict:
-    """구성한 ret2win payload 를 격리 샌드박스에 주입해 익스 성공을 검증한다.
+    """구성한 ret2win/ROP payload 를 격리 샌드박스에 주입해 익스 성공을 검증한다.
 
-    ``payload = b'A'*offset + p{bits}(target)`` 를 실제 실행으로 확인한다.
+    ``payload = b'A'*offset + p{bits}(target) + Σ p{bits}(chain)`` 를 실제 실행으로
+    확인한다. ``chain`` 으로 ret2system 등 다단계 ROP 를 표현한다.
     기본 비활성(샌드박스 실행 게이트) — 503 가능.
     """
     data = repo.load_bytes(sha256)
     target_addr = _parse_address(target)
+    chain_addrs = [_parse_address(c) for c in chain]
     return await run_in_threadpool(
         lambda: service.verify_exploit(
-            data, offset=offset, target=target_addr, bits=bits, markers=marker
+            data,
+            offset=offset,
+            target=target_addr,
+            bits=bits,
+            chain=chain_addrs,
+            markers=marker,
         )
     )
 

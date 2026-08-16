@@ -30,7 +30,7 @@ import tempfile
 
 from pwnable_lab.config import get_settings
 from pwnable_lab.errors import SandboxError
-from pwnable_lab.payload.pack import build_overflow
+from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox import (
     SandboxLimits,
     confirm_return_offset,
@@ -67,6 +67,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--target", type=int, default=None, help="--verify: 점프할 대상 주소(정수)"
     )
     parser.add_argument("--bits", type=int, default=64, help="--verify: 32 또는 64")
+    parser.add_argument(
+        "--chain",
+        action="append",
+        default=[],
+        type=lambda v: int(v, 0),
+        dest="chain",
+        help="--verify: target 뒤에 이어붙일 ROP 주소(반복 가능)",
+    )
     parser.add_argument(
         "--marker",
         action="append",
@@ -134,10 +142,16 @@ def main(argv: list[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 3
-            payload = build_overflow(args.offset, args.target, bits=args.bits)
+            payload = build_overflow(
+                args.offset,
+                args.target,
+                bits=args.bits,
+                chain=[RopStep(a) for a in args.chain],
+            )
             print(
                 f"[sandbox-cli] verify_payload 실행 "
-                f"(offset={args.offset}, target=0x{args.target:x})",
+                f"(offset={args.offset}, target=0x{args.target:x}, "
+                f"chain={len(args.chain)})",
                 file=sys.stderr,
             )
             result = verify_payload(
