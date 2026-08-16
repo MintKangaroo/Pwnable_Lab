@@ -914,6 +914,46 @@ def ret2system_plan(image: ElfImage) -> dict | None:
     return {"pop_rdi": pop_rdi, "binsh": binsh, "system": system}
 
 
+def ret2libc_plan(image: ElfImage) -> dict | None:
+    """2단계 ret2libc(leak→base→system)의 **바이너리측** 구성요소를 수집(amd64).
+
+    - ``pop_rdi``: 인자 제어 가젯
+    - ``puts_plt`` / ``puts_got``: leak 용(puts(puts@got))
+    - ``ret``: system 정렬용 ret 가젯
+    - ``return_to``: leak 뒤 다시 오버플로 입력을 읽게 만들 재진입 지점
+      (``main`` 우선, 없으면 ``vuln``). 비 PIE 절대주소.
+
+    libc 측 오프셋은 :func:`sandbox.libc.resolve_libc_symbols` 가 채운다.
+    구성요소가 없으면(예: 스트립되어 재진입 심볼 부재) None.
+    """
+
+    if (image.bits or 64) != 64:
+        return None
+    plt = {entry.symbol: entry for entry in analyze_got_plt(image).plt_entries}
+    puts = plt.get("puts")
+    pop_rdi = _find_pop_rdi(image)
+    ret = find_ret_gadget(image)
+    reenter = image.symbol("main") or image.symbol("vuln")
+    if (
+        pop_rdi is None
+        or ret is None
+        or puts is None
+        or not puts.address
+        or not puts.got_address
+        or reenter is None
+        or not reenter.addr
+    ):
+        return None
+    return {
+        "pop_rdi": pop_rdi,
+        "puts_plt": puts.address,
+        "puts_got": puts.got_address,
+        "ret": ret,
+        "return_to": reenter.addr,
+        "return_to_name": reenter.name,
+    }
+
+
 def _find_pop_rdi(image: ElfImage) -> int | None:
     """``pop rdi ; ret`` 로 시작·끝나는 최단 가젯의 주소(없으면 None)."""
 
