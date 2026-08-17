@@ -31,6 +31,7 @@ const tabsForFormat = (format) => {
       COMMON_TABS[3],
       ['got', 'GOT / PLT'],
       ['strategy', 'Exploit Strategy'],
+      ['exploit-runner', 'Exploit Runner'],
       COMMON_TABS[4],
     ];
   }
@@ -1893,6 +1894,330 @@ function Strategy({ sha }) {
   );
 }
 
+function useSandboxAction(fn) {
+  const [state, setState] = useState({ status: 'idle', result: null, error: '' });
+  const run = async (...args) => {
+    setState({ status: 'running', result: null, error: '' });
+    try {
+      const result = await fn(...args);
+      setState({ status: 'done', result, error: '' });
+    } catch (reason) {
+      setState({ status: 'error', result: null, error: reason.message });
+    }
+  };
+  return [state, run];
+}
+
+function SuccessBadge({ ok }) {
+  return <Badge tone={ok ? 'green' : 'danger'}>{ok ? '성공 verified' : '실패'}</Badge>;
+}
+
+function RunnerResult({ state }) {
+  if (state.status === 'running') return <Loading label="샌드박스에서 실행 중" />;
+  if (state.status === 'error') {
+    return (
+      <div className="runner-error">
+        <strong>⚠ 실행 불가</strong>
+        <p>{state.error}</p>
+        <p className="runner-hint">
+          동적 검증은 기본 비활성입니다. 서버가 격리 컨테이너에서{' '}
+          <code>PLAB_SANDBOX_EXECUTION_ENABLED=1</code> 로 켠 경우에만 동작합니다.
+        </p>
+      </div>
+    );
+  }
+  return null;
+}
+
+function ExploitRunner({ sha }) {
+  const [patternLength, setPatternLength] = useState('');
+  const [offset, setOffset] = useState('');
+  const [target, setTarget] = useState('');
+  const [chain, setChain] = useState('');
+  const [marker, setMarker] = useState('');
+
+  const [autoState, runAuto] = useSandboxAction((pl) => api.autoExploit(sha, pl));
+  const [confirmState, runConfirm] = useSandboxAction((pl) =>
+    api.confirmOffset(sha, pl),
+  );
+  const [leakState, runLeak] = useSandboxAction((off) => api.leak(sha, off));
+  const [r2lState, runR2l] = useSandboxAction((off) => api.autoRet2libc(sha, off));
+  const [verifyState, runVerify] = useSandboxAction((opts) =>
+    api.verifyExploit(sha, opts),
+  );
+
+  const pl = patternLength ? Number(patternLength) : undefined;
+  const off = offset ? Number(offset) : undefined;
+
+  const injectedPaths =
+    autoState.result?.strategy?.paths?.filter((p) => p.offset_verified) || [];
+  const conf = autoState.result?.confirmation;
+  const ver = autoState.result?.verification;
+
+  return (
+    <div className="strategy-workspace runner-workspace">
+      <section className="strategy-intro">
+        <div className="section-heading">
+          <h3>Exploit Runner (동적 검증)</h3>
+          <span className="verification verification-inferred">
+            격리 샌드박스 · 기본 비활성
+          </span>
+        </div>
+        <p className="strategy-disclaimer">
+          정적 추정을 넘어, 격리된 network-disabled 일회용 샌드박스에서 바이너리를
+          실제로 실행해 오프셋·익스를 <strong>verified</strong> 로 확인합니다. 신뢰할 수
+          없는 바이너리를 실행하므로 서버에서 명시적으로 켠 배포에서만 동작합니다
+          (아니면 503).
+        </p>
+      </section>
+
+      {/* Auto-exploit — 헤드라인 */}
+      <section className="runner-card runner-headline">
+        <div className="section-heading">
+          <h3>Auto-Exploit</h3>
+          <span>오프셋 확정 → 스켈레톤 주입 → ret2win/ret2system 자동 검증</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            pattern length
+            <input
+              type="number"
+              placeholder="512"
+              value={patternLength}
+              onChange={(e) => setPatternLength(e.target.value)}
+            />
+          </label>
+          <button
+            className="button primary"
+            disabled={autoState.status === 'running'}
+            onClick={() => runAuto(pl)}
+          >
+            Auto-Exploit 실행
+          </button>
+        </div>
+        <RunnerResult state={autoState} />
+        {autoState.status === 'done' && (
+          <div className="runner-result">
+            <div className="runner-kv">
+              <span>오프셋</span>
+              <strong>
+                {conf?.confirmed ? (
+                  <>
+                    {conf.offset} <SuccessBadge ok />
+                  </>
+                ) : (
+                  <>미확정 ({conf?.observation?.note || 'n/a'})</>
+                )}
+              </strong>
+            </div>
+            <div className="runner-kv">
+              <span>검증</span>
+              <strong>
+                {ver?.attempted ? (
+                  <>
+                    {ver.technique} <SuccessBadge ok={ver.succeeded} /> · {ver.reason}
+                  </>
+                ) : (
+                  <>미시도 ({ver?.reason})</>
+                )}
+              </strong>
+            </div>
+            {injectedPaths.map((p) => (
+              <div key={p.id} className="path-section">
+                <div className="pseudo-c-toolbar">
+                  <strong>{p.id} — 확정 오프셋 주입된 스켈레톤</strong>
+                  <CopyButton value={p.pwntools} />
+                </div>
+                <pre className="pseudo-c-code">
+                  <code>{p.pwntools}</code>
+                </pre>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* 개별 프리미티브 */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>개별 실행</h3>
+          <span>오프셋 확정 · libc leak · ret2libc</span>
+        </div>
+        <div className="runner-grid">
+          <div className="runner-mini">
+            <strong>오프셋 확정</strong>
+            <div className="runner-actions">
+              <button
+                className="button secondary"
+                disabled={confirmState.status === 'running'}
+                onClick={() => runConfirm(pl)}
+              >
+                confirm-offset
+              </button>
+            </div>
+            <RunnerResult state={confirmState} />
+            {confirmState.status === 'done' && (
+              <p className="runner-kv">
+                <span>offset</span>
+                <strong>
+                  {confirmState.result.confirmed ? (
+                    <>
+                      {confirmState.result.offset} <SuccessBadge ok /> ·{' '}
+                      {confirmState.result.method}
+                    </>
+                  ) : (
+                    '미확정'
+                  )}
+                </strong>
+              </p>
+            )}
+          </div>
+
+          <div className="runner-mini">
+            <strong>libc leak</strong>
+            <div className="runner-actions">
+              <label className="runner-field">
+                offset
+                <input
+                  type="number"
+                  value={offset}
+                  onChange={(e) => setOffset(e.target.value)}
+                />
+              </label>
+              <button
+                className="button secondary"
+                disabled={leakState.status === 'running' || off === undefined}
+                onClick={() => runLeak(off)}
+              >
+                leak
+              </button>
+            </div>
+            <RunnerResult state={leakState} />
+            {leakState.status === 'done' && (
+              <p className="runner-kv">
+                <span>leaked</span>
+                <strong>
+                  {leakState.result.succeeded ? (
+                    <>
+                      {String(leakState.result.leaked_hex)} <SuccessBadge ok />
+                    </>
+                  ) : (
+                    `실패 (${leakState.result.reason})`
+                  )}
+                </strong>
+              </p>
+            )}
+          </div>
+
+          <div className="runner-mini">
+            <strong>auto-ret2libc</strong>
+            <div className="runner-actions">
+              <button
+                className="button secondary"
+                disabled={r2lState.status === 'running' || off === undefined}
+                onClick={() => runR2l(off)}
+              >
+                ret2libc (offset 위 값)
+              </button>
+            </div>
+            <RunnerResult state={r2lState} />
+            {r2lState.status === 'done' && (
+              <div>
+                <p className="runner-kv">
+                  <span>결과</span>
+                  <strong>
+                    <SuccessBadge ok={r2lState.result.succeeded} /> ·{' '}
+                    {String(r2lState.result.reason)}
+                  </strong>
+                </p>
+                {r2lState.result.libc_base_hex && (
+                  <p className="runner-kv">
+                    <span>libc base</span>
+                    <strong>
+                      {String(r2lState.result.libc_base_hex)}
+                      {r2lState.result.libc_base_page_aligned ? ' (page-aligned)' : ''}
+                    </strong>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* 수동 verify-exploit */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>Verify Exploit (수동)</h3>
+          <span>A*offset + p(target) + chain 을 실제 주입</span>
+        </div>
+        <div className="runner-actions runner-verify">
+          <label className="runner-field">
+            offset
+            <input
+              type="number"
+              value={offset}
+              onChange={(e) => setOffset(e.target.value)}
+            />
+          </label>
+          <label className="runner-field">
+            target (0x…)
+            <input
+              placeholder="0x401196"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+            />
+          </label>
+          <label className="runner-field">
+            chain (쉼표)
+            <input
+              placeholder="0x…,0x…"
+              value={chain}
+              onChange={(e) => setChain(e.target.value)}
+            />
+          </label>
+          <label className="runner-field">
+            marker
+            <input value={marker} onChange={(e) => setMarker(e.target.value)} />
+          </label>
+          <button
+            className="button secondary"
+            disabled={verifyState.status === 'running' || off === undefined || !target}
+            onClick={() =>
+              runVerify({
+                offset: off,
+                target,
+                chain: chain
+                  ? chain
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  : undefined,
+                marker: marker ? [marker] : undefined,
+              })
+            }
+          >
+            verify-exploit
+          </button>
+        </div>
+        <RunnerResult state={verifyState} />
+        {verifyState.status === 'done' && (
+          <p className="runner-kv">
+            <span>결과</span>
+            <strong>
+              <SuccessBadge ok={verifyState.result.succeeded} /> ·{' '}
+              {String(verifyState.result.reason)}
+              {verifyState.result.matched_markers?.length
+                ? ` · marker ${verifyState.result.matched_markers.join(',')}`
+                : ''}
+            </strong>
+          </p>
+        )}
+      </section>
+    </div>
+  );
+}
+
 /**
  * @param {{
  *   sha: string,
@@ -2048,6 +2373,7 @@ export function Analysis({
           )}
           {tab === 'gadgets' && <Gadgets sha={sha} onAddressChange={onAddressChange} />}
           {tab === 'strategy' && <Strategy sha={sha} />}
+          {tab === 'exploit-runner' && <ExploitRunner sha={sha} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}
           {tab === 'got' && <GotPlt sha={sha} />}
