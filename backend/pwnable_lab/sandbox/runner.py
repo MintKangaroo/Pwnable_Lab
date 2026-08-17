@@ -202,9 +202,7 @@ def run_with_input(
 
     lib = _libc()
     read_fd, write_fd = os.pipe()
-    out_read = out_write = None
-    if capture_stdout:
-        out_read, out_write = os.pipe()
+    capture: tuple[int, int] | None = os.pipe() if capture_stdout else None
     pid = os.fork()
     if pid == 0:  # pragma: no cover - 자식 프로세스
         try:
@@ -213,10 +211,11 @@ def run_with_input(
             os.dup2(read_fd, 0)
             os.close(read_fd)
             devnull = os.open(os.devnull, os.O_WRONLY)
-            if out_write is not None:
-                os.close(out_read)
-                os.dup2(out_write, 1)
-                os.close(out_write)
+            if capture is not None:
+                child_read, child_write = capture
+                os.close(child_read)
+                os.dup2(child_write, 1)
+                os.close(child_write)
             else:
                 os.dup2(devnull, 1)
             os.dup2(devnull, 2)
@@ -229,7 +228,9 @@ def run_with_input(
 
     # --- 부모 ---
     os.close(read_fd)
-    if out_write is not None:
+    out_read: int | None = None
+    if capture is not None:
+        out_read, out_write = capture
         os.close(out_write)
         os.set_blocking(out_read, False)
     try:
@@ -716,8 +717,13 @@ def _supervise_two_stage(
         except ChildProcessError:
             return finish(
                 CrashObservation(
-                    crashed=False, timed_out=False, signal=None, signal_name=None,
-                    rip=None, rsp=None, note="자식이 이미 회수됨",
+                    crashed=False,
+                    timed_out=False,
+                    signal=None,
+                    signal_name=None,
+                    rip=None,
+                    rsp=None,
+                    note="자식이 이미 회수됨",
                 )
             )
         if waited == 0:
@@ -726,8 +732,13 @@ def _supervise_two_stage(
         if os.WIFEXITED(status):
             return finish(
                 CrashObservation(
-                    crashed=False, timed_out=False, signal=None, signal_name=None,
-                    rip=None, rsp=None, exit_code=os.WEXITSTATUS(status),
+                    crashed=False,
+                    timed_out=False,
+                    signal=None,
+                    signal_name=None,
+                    rip=None,
+                    rsp=None,
+                    exit_code=os.WEXITSTATUS(status),
                     note="크래시 없이 정상 종료",
                 )
             )
@@ -735,8 +746,12 @@ def _supervise_two_stage(
             sig = os.WTERMSIG(status)
             return finish(
                 CrashObservation(
-                    crashed=True, timed_out=False, signal=sig,
-                    signal_name=signal.Signals(sig).name, rip=None, rsp=None,
+                    crashed=True,
+                    timed_out=False,
+                    signal=sig,
+                    signal_name=signal.Signals(sig).name,
+                    rip=None,
+                    rsp=None,
                     note="ptrace 외부에서 시그널 종료",
                 )
             )

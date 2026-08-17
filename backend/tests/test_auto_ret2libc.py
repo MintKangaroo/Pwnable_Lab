@@ -46,17 +46,13 @@ def test_auto_ret2libc_routes_to_container(monkeypatch):
         calls.update(offset=offset)
         return {"attempted": True, "technique": "ret2libc", "succeeded": True}
 
-    monkeypatch.setattr(
-        "pwnable_lab.api.services.auto_ret2libc_in_container", fake
-    )
+    monkeypatch.setattr("pwnable_lab.api.services.auto_ret2libc_in_container", fake)
     out = _service("container").auto_ret2libc(sample_elf(), offset=72)
     assert out == {"attempted": True, "technique": "ret2libc", "succeeded": True}
     assert calls["offset"] == 72
 
 
-@pytest.mark.skipif(
-    not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요"
-)
+@pytest.mark.skipif(not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요")
 def test_auto_ret2libc_pie_is_rejected(tmp_path):
     csrc = tmp_path / "pie.c"
     csrc.write_text(_R2L_SRC)

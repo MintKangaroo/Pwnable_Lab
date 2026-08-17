@@ -65,7 +65,9 @@ class Settings(BaseSettings):
     #                 API 프로세스 자체가 격리 경계 안에 있어야 안전하다.
     #   "container" — 매 요청마다 network-disabled 일회용 컨테이너를 띄워 실행.
     #                 프로덕션 권장. sandbox/run.sh 와 동일한 하드닝을 강제한다.
-    sandbox_executor: str = Field(default="inprocess", pattern="^(inprocess|container)$")
+    sandbox_executor: str = Field(
+        default="inprocess", pattern="^(inprocess|container)$"
+    )
     sandbox_container_image: str = "pwnpilot-sandbox"
     sandbox_docker_bin: str = "docker"
     sandbox_container_runtime: str = ""  # 예) "runsc" (gVisor)

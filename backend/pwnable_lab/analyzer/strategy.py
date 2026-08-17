@@ -876,7 +876,9 @@ def binary_exec_range(image: ElfImage) -> tuple[int, int] | None:
         start, end = section.addr, section.addr + section.size
         lo = start if lo is None else min(lo, start)
         hi = end if hi is None else max(hi, end)
-    return None if lo is None else (lo, hi)
+    if lo is None or hi is None:
+        return None
+    return (lo, hi)
 
 
 def find_binsh(image: ElfImage) -> int | None:
