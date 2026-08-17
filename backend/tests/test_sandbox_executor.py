@@ -22,9 +22,7 @@ def _settings(**over):
 
 
 def _proc(returncode=0, stdout=b"", stderr=b""):
-    return types.SimpleNamespace(
-        returncode=returncode, stdout=stdout, stderr=stderr
-    )
+    return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 _OK = {
@@ -66,7 +64,11 @@ def test_verify_container_builds_expected_cli_args(monkeypatch):
 
     monkeypatch.setattr(executor.subprocess, "run", fake_run)
     out = executor.verify_exploit_in_container(
-        b"\x7fELF", offset=72, target=0x401156, bits=64, markers=["WIN"],
+        b"\x7fELF",
+        offset=72,
+        target=0x401156,
+        bits=64,
+        markers=["WIN"],
         settings=_settings(),
     )
     assert out == {"succeeded": True}

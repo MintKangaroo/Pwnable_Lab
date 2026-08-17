@@ -128,9 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             binary_path = args.binary
             if not os.path.isfile(binary_path):
-                print(
-                    f"[sandbox-cli] 파일이 없습니다: {binary_path}", file=sys.stderr
-                )
+                print(f"[sandbox-cli] 파일이 없습니다: {binary_path}", file=sys.stderr)
                 return 3
     except (OSError, ValueError) as exc:
         print(f"[sandbox-cli] 입력 오류: {exc}", file=sys.stderr)

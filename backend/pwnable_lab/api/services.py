@@ -513,9 +513,7 @@ class AnalysisService:
             settings=self.settings,
         )
 
-    def verify_leak(
-        self, data: bytes, *, offset: int, bits: int | None = None
-    ) -> dict:
+    def verify_leak(self, data: bytes, *, offset: int, bits: int | None = None) -> dict:
         """puts(puts@got) → exit 체인으로 런타임 libc 주소를 유출한다(amd64).
 
         ``puts`` 가 GOT 슬롯의 값(런타임 libc 주소)을 출력하고 ``exit`` 로 깨끗이

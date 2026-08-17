@@ -85,7 +85,9 @@ def confirm_offset_in_container(
     강제한다.
     """
 
-    return _run_container(settings, ["--stdin", "--pattern-length", str(pattern_length)], data)
+    return _run_container(
+        settings, ["--stdin", "--pattern-length", str(pattern_length)], data
+    )
 
 
 def verify_exploit_in_process(
@@ -132,9 +134,12 @@ def verify_exploit_in_container(
     cli_args = [
         "--stdin",
         "--verify",
-        "--offset", str(offset),
-        "--target", str(target),
-        "--bits", str(bits),
+        "--offset",
+        str(offset),
+        "--target",
+        str(target),
+        "--bits",
+        str(bits),
     ]
     for link in chain:
         cli_args += ["--chain", str(link)]
@@ -189,9 +194,10 @@ def _run_container(
     if not stdout:
         raise SandboxError("샌드박스 컨테이너가 결과를 출력하지 않았습니다.")
     try:
-        return json.loads(stdout)
+        parsed: dict = json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise SandboxError(f"샌드박스 컨테이너 출력 파싱 실패: {exc}") from exc
+    return parsed
 
 
 def _docker_base_argv(settings: _ExecutorSettings) -> list[str]:
@@ -202,21 +208,34 @@ def _docker_base_argv(settings: _ExecutorSettings) -> list[str]:
     if settings.sandbox_container_runtime:
         argv += ["--runtime", settings.sandbox_container_runtime]
     argv += [
-        "--network", "none",
+        "--network",
+        "none",
         "--read-only",
-        "--tmpfs", f"/tmp:rw,exec,nosuid,size={settings.sandbox_container_tmp_size},mode=1777",
-        "--tmpfs", "/run:rw,noexec,nosuid,size=1m,mode=1777",
-        "--cap-drop", "ALL",
-        "--cap-add", "SYS_PTRACE",
-        "--security-opt", "no-new-privileges",
-        "--pids-limit", str(settings.sandbox_container_pids),
-        "--memory", mem,
-        "--memory-swap", mem,
-        "--cpus", settings.sandbox_container_cpus,
+        "--tmpfs",
+        f"/tmp:rw,exec,nosuid,size={settings.sandbox_container_tmp_size},mode=1777",
+        "--tmpfs",
+        "/run:rw,noexec,nosuid,size=1m,mode=1777",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "SYS_PTRACE",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        str(settings.sandbox_container_pids),
+        "--memory",
+        mem,
+        "--memory-swap",
+        mem,
+        "--cpus",
+        settings.sandbox_container_cpus,
         # 러너 자원 상한을 컨테이너 CLI 에도 전달(컨테이너 밖 설정과 일치시킴).
-        "-e", f"PLAB_SANDBOX_WALL_SECONDS={settings.sandbox_wall_seconds}",
-        "-e", f"PLAB_SANDBOX_CPU_SECONDS={settings.sandbox_cpu_seconds}",
-        "-e", f"PLAB_SANDBOX_ADDRESS_SPACE_BYTES={settings.sandbox_address_space_bytes}",
+        "-e",
+        f"PLAB_SANDBOX_WALL_SECONDS={settings.sandbox_wall_seconds}",
+        "-e",
+        f"PLAB_SANDBOX_CPU_SECONDS={settings.sandbox_cpu_seconds}",
+        "-e",
+        f"PLAB_SANDBOX_ADDRESS_SPACE_BYTES={settings.sandbox_address_space_bytes}",
         settings.sandbox_container_image,
     ]
     return argv

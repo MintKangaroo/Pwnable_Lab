@@ -287,7 +287,9 @@ async def binary_leak(
 async def binary_verify_exploit(
     sha256: str,
     offset: int = Query(..., ge=0, le=1_048_576),
-    target: str = Query(..., max_length=32, description="점프 대상 주소(0x… 또는 10진)"),
+    target: str = Query(
+        ..., max_length=32, description="점프 대상 주소(0x… 또는 10진)"
+    ),
     bits: int | None = Query(default=None),
     chain: list[str] = Query(default=[], max_length=32),
     marker: list[str] = Query(default=[], max_length=64),
