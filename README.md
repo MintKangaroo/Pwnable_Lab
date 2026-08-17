@@ -198,6 +198,9 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   오프셋은 실행 환경의 libc 에서 해석)
 - 안전 경계: 프로세스 rlimit(CPU/AS/NPROC/FSIZE/CORE)·wall-clock 워치독·
   프로세스그룹 SIGKILL + 컨테이너 격리. 게이트/격리 마커 미충족 시 `503`
+- **UI**: ELF Workspace 의 `Exploit Runner` 탭에서 auto-exploit / confirm-offset /
+  libc leak / auto-ret2libc / verify-exploit 를 실행하고 결과(확정 오프셋, 주입된
+  스켈레톤, 검증 성공/근거)를 확인. 비활성 배포에서는 안내(503)로 처리
 
 ### 재사용된 정적 분석 기능
 

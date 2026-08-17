@@ -257,6 +257,22 @@ function postJSON<T>(path: string, body: unknown): Promise<T> {
   });
 }
 
+type QueryValue = string | number | undefined | (string | number)[];
+
+function postQuery<T>(
+  path: string,
+  params: Record<string, QueryValue> = {},
+): Promise<T> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === '') continue;
+    if (Array.isArray(value)) value.forEach((item) => qs.append(key, String(item)));
+    else qs.set(key, String(value));
+  }
+  const suffix = qs.toString() ? `?${qs}` : '';
+  return request<T>(`${path}${suffix}`, { method: 'POST' });
+}
+
 export const api = {
   health: () => request<{ status: string; version: string }>('/health'),
   binaries: () => request<BinarySummary[]>('/binaries'),
@@ -323,6 +339,36 @@ export const api = {
   pseudocode: (sha: string, address: number | string) =>
     request<PseudoCodeResult>(`/binaries/${sha}/functions/${address}/pseudocode`),
   strategy: (sha: string) => request<StrategyResult>(`/binaries/${sha}/strategy`),
+  // Phase 6 dynamic sandbox — 기본 비활성(서버가 켜지 않으면 503 SandboxError).
+  confirmOffset: (sha: string, patternLength?: number) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/confirm-offset`, {
+      pattern_length: patternLength,
+    }),
+  autoExploit: (sha: string, patternLength?: number) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/auto-exploit`, {
+      pattern_length: patternLength,
+    }),
+  verifyExploit: (
+    sha: string,
+    opts: {
+      offset: number;
+      target: string;
+      bits?: number;
+      chain?: string[];
+      marker?: string[];
+    },
+  ) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/verify-exploit`, {
+      offset: opts.offset,
+      target: opts.target,
+      bits: opts.bits,
+      chain: opts.chain,
+      marker: opts.marker,
+    }),
+  leak: (sha: string, offset: number) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/leak`, { offset }),
+  autoRet2libc: (sha: string, offset: number) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/auto-ret2libc`, { offset }),
   cfg: (sha: string, address: number | string) =>
     request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}/cfg`),
   xrefs: (
