@@ -824,6 +824,16 @@ def _skeleton_generic(context: _Context) -> str:
 _OFFSET_LINE = re.compile(r"^offset = .*$", re.MULTILINE)
 
 
+def is_pie(image: ElfImage) -> bool:
+    """PIE(위치 독립 실행) 여부. ET_DYN 실행파일은 무작위 base 로 로드된다.
+
+    PIE 에서는 심볼/가젯 주소가 **base 상대 오프셋**이라, 절대주소를 전제하는
+    자동 익스(ret2win/ret2system/ret2libc)는 PIE base leak 이 선행돼야 성립한다.
+    """
+
+    return image.e_type == "ET_DYN"
+
+
 def ret2win_target(image: ElfImage) -> tuple[str, int] | None:
     """최상위 win/셸 함수 후보 ``(name, addr)`` 를 반환한다(없으면 None).
 

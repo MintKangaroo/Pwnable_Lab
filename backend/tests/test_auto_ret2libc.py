@@ -55,6 +55,42 @@ def test_auto_ret2libc_routes_to_container(monkeypatch):
 
 
 @pytest.mark.skipif(
+    not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요"
+)
+def test_auto_ret2libc_pie_is_rejected(tmp_path):
+    csrc = tmp_path / "pie.c"
+    csrc.write_text(_R2L_SRC)
+    out = tmp_path / "pie"
+    subprocess.run(
+        ["gcc", "-fno-stack-protector", "-pie", "-fPIE", "-o", str(out), str(csrc)],
+        check=True,
+        capture_output=True,
+    )
+    result = _service().auto_ret2libc(out.read_bytes(), offset=72)
+    # PIE 는 절대주소 자동 체인 불가 → base leak 선행 필요를 명시.
+    assert result["attempted"] is False
+    assert result["reason"] == "pie-needs-base-leak"
+
+
+@pytest.mark.skipif(
+    not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요(실제 실행)"
+)
+def test_auto_exploit_pie_verification_reports_pie(tmp_path):
+    csrc = tmp_path / "pie2.c"
+    csrc.write_text(_R2L_SRC)
+    out = tmp_path / "pie2"
+    subprocess.run(
+        ["gcc", "-fno-stack-protector", "-pie", "-fPIE", "-o", str(out), str(csrc)],
+        check=True,
+        capture_output=True,
+    )
+    result = _service().auto_exploit(out.read_bytes(), pattern_length=400)
+    # 오프셋 확정은 PIE 에서도 되지만, 절대주소 검증은 PIE 를 명시 거부.
+    assert result["verification"]["attempted"] is False
+    assert result["verification"]["reason"] == "pie-needs-base-leak"
+
+
+@pytest.mark.skipif(
     not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요(실제 실행)"
 )
 def test_auto_ret2libc_end_to_end(tmp_path):
