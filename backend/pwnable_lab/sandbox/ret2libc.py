@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pwnable_lab.analyzer.strategy import binary_exec_range, ret2libc_plan
+from pwnable_lab.analyzer.strategy import binary_exec_range, is_pie, ret2libc_plan
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox.libc import resolve_libc_symbols
@@ -29,6 +29,10 @@ def auto_ret2libc(
     image = parse_elf(Path(binary_path).read_bytes())
     if (image.bits or 64) != 64:
         return {"attempted": False, "reason": "amd64-only"}
+    if is_pie(image):
+        # PIE 는 심볼/가젯이 base 상대라 절대주소 체인을 만들 수 없다(PIE base
+        # leak 선행 필요). 정적 플랜을 절대주소로 오용하지 않도록 명시 거부.
+        return {"attempted": False, "reason": "pie-needs-base-leak"}
     bplan = ret2libc_plan(image)
     if bplan is None:
         return {"attempted": False, "reason": "no-ret2libc-plan"}

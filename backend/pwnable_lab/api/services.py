@@ -28,6 +28,7 @@ from pwnable_lab.analyzer.strategy import (
     binary_exec_range,
     find_ret_gadget,
     inject_confirmed_offset,
+    is_pie,
     leak_plan,
     ret2system_plan,
     ret2win_target,
@@ -343,6 +344,10 @@ class AnalysisService:
 
         image = parse_elf(data)
         bits = image.bits or 64
+        if is_pie(image):
+            # PIE: 심볼/가젯이 base 상대라 절대주소 자동 익스가 성립하지 않는다.
+            # PIE base leak 이 선행돼야 하며, 그건 멀티스테이지(run_two_stage)로만 가능.
+            return {"attempted": False, "reason": "pie-needs-base-leak"}
         attempts: list[dict] = []
 
         win = ret2win_target(image)
