@@ -37,11 +37,21 @@ def test_auto_ret2libc_disabled_raises():
         AnalysisService(Settings()).auto_ret2libc(b"\x7fELF", offset=72)
 
 
-def test_auto_ret2libc_container_unsupported():
-    out = _service("container").auto_ret2libc(b"\x7fELF", offset=72)
-    # 게이트는 통과하지만 컨테이너 executor 는 미지원.
-    assert out["attempted"] is False
-    assert out["reason"] == "inprocess-only"
+def test_auto_ret2libc_routes_to_container(monkeypatch):
+    from tests.fixtures import sample_elf
+
+    calls = {}
+
+    def fake(data, *, offset, settings):
+        calls.update(offset=offset)
+        return {"attempted": True, "technique": "ret2libc", "succeeded": True}
+
+    monkeypatch.setattr(
+        "pwnable_lab.api.services.auto_ret2libc_in_container", fake
+    )
+    out = _service("container").auto_ret2libc(sample_elf(), offset=72)
+    assert out == {"attempted": True, "technique": "ret2libc", "succeeded": True}
+    assert calls["offset"] == 72
 
 
 @pytest.mark.skipif(

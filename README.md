@@ -194,7 +194,8 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   (마커 매치 또는 control-transfer)
 - **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,
   멀티스테이지 러너(출력→입력)로 libc base 계산 후 `system("/bin/sh")` 까지
-  자동 구성 — libc/PIE ASLR 격파 (in-process, amd64)
+  자동 구성 — libc ASLR 격파 (amd64; in-process·컨테이너 executor 모두 지원, libc
+  오프셋은 실행 환경의 libc 에서 해석)
 - 안전 경계: 프로세스 rlimit(CPU/AS/NPROC/FSIZE/CORE)·wall-clock 워치독·
   프로세스그룹 SIGKILL + 컨테이너 격리. 게이트/격리 마커 미충족 시 `503`
 
@@ -321,7 +322,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `POST` | `/binaries/{binary_id}/auto-exploit` | 전략 + 확정 오프셋 주입 + ret2win/ret2system 자동 검증 |
 | `POST` | `/binaries/{binary_id}/verify-exploit` | 구성한 payload/ROP 체인 주입으로 익스 검증 |
 | `POST` | `/binaries/{binary_id}/leak` | `puts(puts@got)` 런타임 libc 주소 유출 |
-| `POST` | `/binaries/{binary_id}/auto-ret2libc` | 완전 자동 2단계 ret2libc (leak→base→system, amd64) |
+| `POST` | `/binaries/{binary_id}/auto-ret2libc` | 완전 자동 2단계 ret2libc (leak→base→system, amd64; in-process·컨테이너) |
 | `GET` | `/binaries/{binary_id}/functions/{address}/pseudocode` | 함수 규칙 기반 pseudo-C 초안 |
 | `GET` | `/binaries/{binary_id}/strings` | 문자열 |
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |

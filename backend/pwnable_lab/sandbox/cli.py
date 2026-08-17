@@ -33,6 +33,7 @@ from pwnable_lab.errors import SandboxError
 from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox import (
     SandboxLimits,
+    auto_ret2libc_core,
     confirm_return_offset,
     require_sandbox_boundary,
     verify_payload,
@@ -62,7 +63,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="오프셋 확정 대신 ret2win payload 를 주입해 익스 성공을 검증한다.",
     )
-    parser.add_argument("--offset", type=int, default=None, help="--verify: 반환 오프셋")
+    parser.add_argument(
+        "--auto-ret2libc",
+        action="store_true",
+        dest="auto_ret2libc",
+        help="완전 자동 2단계 ret2libc(leak→base→system). --offset 필요.",
+    )
+    parser.add_argument("--offset", type=int, default=None, help="반환 오프셋")
     parser.add_argument(
         "--target", type=int, default=None, help="--verify: 점프할 대상 주소(정수)"
     )
@@ -135,7 +142,19 @@ def main(argv: list[str] | None = None) -> int:
         address_space_bytes=settings.sandbox_address_space_bytes,
     )
     try:
-        if args.verify:
+        if args.auto_ret2libc:
+            if args.offset is None:
+                print(
+                    "[sandbox-cli] --auto-ret2libc 는 --offset 이 필요합니다.",
+                    file=sys.stderr,
+                )
+                return 3
+            print(
+                f"[sandbox-cli] auto_ret2libc 실행 (offset={args.offset})",
+                file=sys.stderr,
+            )
+            output = auto_ret2libc_core(binary_path, offset=args.offset, limits=limits)
+        elif args.verify:
             if args.offset is None or args.target is None:
                 print(
                     "[sandbox-cli] --verify 는 --offset 과 --target 이 필요합니다.",
@@ -154,18 +173,18 @@ def main(argv: list[str] | None = None) -> int:
                 f"chain={len(args.chain)})",
                 file=sys.stderr,
             )
-            result = verify_payload(
+            output = verify_payload(
                 binary_path, payload, success_markers=args.markers, limits=limits
-            )
+            ).as_dict()
         else:
             length = args.pattern_length or settings.sandbox_pattern_length
             print(
                 f"[sandbox-cli] confirm_return_offset 실행 (pattern_length={length})",
                 file=sys.stderr,
             )
-            result = confirm_return_offset(
+            output = confirm_return_offset(
                 binary_path, pattern_length=length, limits=limits
-            )
+            ).as_dict()
     except SandboxError as exc:
         print(f"[sandbox-cli] 샌드박스 오류: {exc}", file=sys.stderr)
         return 2
@@ -176,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 pass
 
-    json.dump(result.as_dict(), sys.stdout, ensure_ascii=False)
+    json.dump(output, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0
 

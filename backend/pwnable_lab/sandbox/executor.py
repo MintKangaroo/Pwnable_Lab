@@ -143,6 +143,20 @@ def verify_exploit_in_container(
     return _run_container(settings, cli_args, data)
 
 
+def auto_ret2libc_in_container(
+    data: bytes, *, offset: int, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 완전 자동 2단계 ret2libc 를 수행한다.
+
+    libc 오프셋 해석·멀티스테이지 실행이 모두 컨테이너 **안**(그 컨테이너의 libc)
+    에서 일어나야 하므로 CLI ``--auto-ret2libc`` 로 위임한다.
+    """
+
+    return _run_container(
+        settings, ["--stdin", "--auto-ret2libc", "--offset", str(offset)], data
+    )
+
+
 def _run_container(
     settings: _ExecutorSettings, cli_args: list[str], data: bytes
 ) -> dict:

@@ -14,6 +14,7 @@
 """
 
 from pwnable_lab.sandbox.executor import (
+    auto_ret2libc_in_container,
     confirm_offset_in_container,
     confirm_offset_in_process,
     verify_exploit_in_container,
@@ -24,6 +25,7 @@ from pwnable_lab.sandbox.gate import (
     require_sandbox_boundary,
     require_sandbox_enabled,
 )
+from pwnable_lab.sandbox.ret2libc import auto_ret2libc as auto_ret2libc_core
 from pwnable_lab.sandbox.runner import (
     CrashObservation,
     ExploitVerification,
@@ -40,6 +42,8 @@ __all__ = [
     "ExploitVerification",
     "OffsetConfirmation",
     "SandboxLimits",
+    "auto_ret2libc_core",
+    "auto_ret2libc_in_container",
     "confirm_offset_in_container",
     "confirm_offset_in_process",
     "confirm_return_offset",
