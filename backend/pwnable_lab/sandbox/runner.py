@@ -878,3 +878,103 @@ def verify_shell(
         command=cmd,
         output=bytes(output[:cap]),
     )
+
+
+def run_two_stage_shell(
+    binary_path: str,
+    make_second: Callable[[bytes], bytes],
+    *,
+    marker: str,
+    prelude: bytes = b"",
+    command: str | None = None,
+    limits: SandboxLimits | None = None,
+) -> tuple[ShellProof, bytes]:
+    """PTY 로 2단계(leak→stage2)를 몰고, spawn 된 셸에 명령을 흘려 증명한다.
+
+    ret2libc 처럼 "유출을 읽어 2단계를 만들고, 그 2단계가 ``system("/bin/sh")`` 로
+    셸을 띄우는" 흐름을 PTY 위에서 수행한다. tty 라인 규율 덕에 대상 stdout 이
+    라인버퍼(무버퍼 setvbuf 불필요)라 유출이 즉시 flush 되고, 셸도 대화형으로
+    ``echo <marker>`` 를 읽어 실행한다. 반환: ``(ShellProof, 유출된_첫_줄_bytes)``.
+    """
+
+    _require_supported_platform()
+    limits = limits or SandboxLimits()
+    limits.validate()
+    if not os.path.isfile(binary_path):
+        raise SandboxError(f"실행 대상 파일이 없습니다: {binary_path}")
+
+    cmd = command or f"echo {marker}"
+    marker_bytes = marker.encode()
+    master, slave = os.openpty()
+    tty.setraw(slave)
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - 자식 프로세스
+        try:
+            os.setsid()
+            os.dup2(slave, 0)
+            os.dup2(slave, 1)
+            os.dup2(slave, 2)
+            os.close(master)
+            os.close(slave)
+            _apply_child_limits(limits, cap_processes=False)
+            os.execv(binary_path, [binary_path])
+        except BaseException:
+            os._exit(127)
+        os._exit(127)
+
+    os.close(slave)
+    output = bytearray()
+    first_line: bytes | None = None
+    stage2_sent = False
+    command_sent = False
+    cap = limits.capture_stdout_bytes
+    deadline = time.monotonic() + limits.wall_seconds
+
+    try:
+        os.write(master, prelude + b"\n")
+    except OSError:
+        pass
+
+    while time.monotonic() < deadline and len(output) < cap:
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if ready:
+            try:
+                chunk = os.read(master, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            output.extend(chunk)
+            if marker_bytes in output:
+                break
+        # 유출 첫 줄을 받으면 2단계를 만들어 보낸다.
+        if not stage2_sent and b"\n" in output:
+            first_line = bytes(output).split(b"\n", 1)[0]
+            stage2_sent = True
+            try:
+                os.write(master, make_second(first_line) + b"\n")
+            except OSError:
+                pass
+        # 2단계를 보낸 뒤 셸에 명령을 흘린다(짧은 대기 후 1회).
+        elif stage2_sent and not command_sent:
+            command_sent = True
+            time.sleep(0.15)
+            try:
+                os.write(master, cmd.encode() + b"\n")
+            except OSError:
+                pass
+
+    try:
+        os.close(master)
+    except OSError:
+        pass
+    _kill_group(pid, timed_out=False, note=None)
+
+    proof = ShellProof(
+        shell_spawned=marker_bytes in bytes(output),
+        marker=marker,
+        command=cmd,
+        output=bytes(output[:cap]),
+    )
+    return proof, (first_line or b"")
