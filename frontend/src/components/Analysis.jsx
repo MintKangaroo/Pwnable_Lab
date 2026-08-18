@@ -1912,6 +1912,26 @@ function SuccessBadge({ ok }) {
   return <Badge tone={ok ? 'green' : 'danger'}>{ok ? '성공 verified' : '실패'}</Badge>;
 }
 
+function ShellSession({ proof }) {
+  if (!proof) return null;
+  return (
+    <div className="shell-session">
+      <div className="shell-session-head">
+        <Badge tone={proof.shell_spawned ? 'green' : 'danger'}>
+          {proof.shell_spawned ? '🐚 셸 획득 증명' : '셸 미획득'}
+        </Badge>
+        {proof.command && <code className="shell-cmd">{proof.command}</code>}
+        {proof.marker && <span className="shell-marker">marker: {proof.marker}</span>}
+      </div>
+      {proof.output && (
+        <pre className="shell-term">
+          <code>{proof.output}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function RunnerResult({ state }) {
   if (state.status === 'running') return <Loading label="샌드박스에서 실행 중" />;
   if (state.status === 'error') {
@@ -2016,12 +2036,24 @@ function ExploitRunner({ sha }) {
                 {ver?.attempted ? (
                   <>
                     {ver.technique} <SuccessBadge ok={ver.succeeded} /> · {ver.reason}
+                    {ver.shell_proven ? ' · 🐚 shell' : ''}
                   </>
                 ) : (
                   <>미시도 ({ver?.reason})</>
                 )}
               </strong>
             </div>
+            {ver?.attempts?.length > 1 && (
+              <div className="runner-kv">
+                <span>시도</span>
+                <strong>
+                  {ver.attempts
+                    .map((a) => `${a.technique}:${a.succeeded ? '✓' : '×'}`)
+                    .join(' · ')}
+                </strong>
+              </div>
+            )}
+            {ver?.shell_proof && <ShellSession proof={ver.shell_proof} />}
             {injectedPaths.map((p) => (
               <div key={p.id} className="path-section">
                 <div className="pseudo-c-toolbar">
@@ -2130,6 +2162,12 @@ function ExploitRunner({ sha }) {
                     {String(r2lState.result.reason)}
                   </strong>
                 </p>
+                {r2lState.result.leaked_puts_hex && (
+                  <p className="runner-kv">
+                    <span>leaked puts</span>
+                    <strong>{String(r2lState.result.leaked_puts_hex)}</strong>
+                  </p>
+                )}
                 {r2lState.result.libc_base_hex && (
                   <p className="runner-kv">
                     <span>libc base</span>
@@ -2139,6 +2177,7 @@ function ExploitRunner({ sha }) {
                     </strong>
                   </p>
                 )}
+                <ShellSession proof={r2lState.result.shell_proof} />
               </div>
             )}
           </div>
