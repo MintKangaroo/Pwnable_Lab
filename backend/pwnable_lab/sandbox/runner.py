@@ -57,6 +57,9 @@ class SandboxLimits:
     cpu_seconds: int = 2
     address_space_bytes: int = 512 * 1024 * 1024
     max_processes: int = 64
+    # 셸 spawn 경로(fork 필수)에서 현재 프로세스 수 위로 허용할 여유분. 이 값이
+    # in-process fork-bomb 의 상한이 된다(컨테이너에서는 --pids-limit 가 우선).
+    shell_process_headroom: int = 64
     stack_peek_words: int = 8
     capture_stdout_bytes: int = 4096  # stdout 캡처 상한(payload 검증용)
 
@@ -160,13 +163,41 @@ def _require_supported_platform() -> None:
         )
 
 
-def _apply_child_limits(limits: SandboxLimits, *, cap_processes: bool = True) -> None:
+def _estimate_task_count() -> int:
+    """현재 시스템의 대략적인 **태스크(스레드 포함) 수**. 실패 시 0.
+
+    ``RLIMIT_NPROC`` 은 프로세스가 아니라 실사용자의 태스크(스레드 포함)를 세므로,
+    셸 spawn 을 허용하는 상한을 잡으려면 프로세스가 아니라 태스크를 기준으로
+    추정해야 한다(멀티스레드 프로세스가 많으면 태스크 수 ≫ 프로세스 수).
+    """
+    total = 0
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                total += len(os.listdir(f"/proc/{entry}/task"))
+            except OSError:
+                total += 1
+    except OSError:  # pragma: no cover - 플랫폼 의존
+        return 0
+    return total
+
+
+def _apply_child_limits(
+    limits: SandboxLimits, *, process_headroom: int | None = None
+) -> None:
     """자식 프로세스에서 exec 직전에 호출. 실패해도 실행은 계속(best-effort).
 
-    ``cap_processes=False`` 면 ``RLIMIT_NPROC`` 를 걸지 않는다. NPROC 은 **실사용자
-    전체(호스트 공유)** 프로세스를 세므로, 셸을 spawn 해야 하는 경로(fork 필수)에서는
-    바쁜 호스트에서 정상 fork 를 막고 fork-bomb 보호도 못 한다 — 그 보호는 컨테이너
-    ``--pids-limit`` 가 담당한다. 시간/메모리 상한과 프로세스그룹 SIGKILL 은 유지된다.
+    ``RLIMIT_NPROC`` 은 **실사용자 전체(호스트 공유)** 프로세스를 세므로 절대값으로
+    걸면 바쁜 호스트에서 fork 를 막거나(예: 셸 spawn) 반대로 bomb 을 못 막는다.
+
+    * ``process_headroom is None`` (기본): 포크가 필요 없는 경로 — 절대 상한
+      ``limits.max_processes``. (대상이 fork 하지 않으므로 현재 사용량보다 낮아도
+      실행에는 문제없고, 새 fork 만 막힌다.)
+    * ``process_headroom`` 지정: 셸을 spawn 해야 하는 경로(fork 필수) — **현재
+      프로세스 수 + headroom** 으로 상한을 잡아 셸 fork 는 허용하되 fork-bomb 은
+      바운드한다(컨테이너 ``--pids-limit`` 위의 in-process 방어선).
     """
     resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -178,13 +209,14 @@ def _apply_child_limits(limits: SandboxLimits, *, cap_processes: bool = True) ->
         )
     except (ValueError, OSError):
         pass
-    if cap_processes:
-        try:
-            resource.setrlimit(
-                resource.RLIMIT_NPROC, (limits.max_processes, limits.max_processes)
-            )
-        except (ValueError, OSError):
-            pass
+    if process_headroom is None:
+        nproc = limits.max_processes
+    else:
+        nproc = _estimate_task_count() + max(1, process_headroom)
+    try:
+        resource.setrlimit(resource.RLIMIT_NPROC, (nproc, nproc))
+    except (ValueError, OSError):
+        pass
 
 
 def run_with_input(
@@ -834,7 +866,7 @@ def verify_shell(
             os.close(master)
             os.close(slave)
             # 셸 spawn 은 fork 가 필수라 NPROC 상한을 걸지 않는다(위 함수 주석 참조).
-            _apply_child_limits(limits, cap_processes=False)
+            _apply_child_limits(limits, process_headroom=limits.shell_process_headroom)
             os.execv(binary_path, [binary_path])
         except BaseException:
             os._exit(127)
@@ -917,7 +949,7 @@ def run_two_stage_shell(
             os.dup2(slave, 2)
             os.close(master)
             os.close(slave)
-            _apply_child_limits(limits, cap_processes=False)
+            _apply_child_limits(limits, process_headroom=limits.shell_process_headroom)
             os.execv(binary_path, [binary_path])
         except BaseException:
             os._exit(127)
