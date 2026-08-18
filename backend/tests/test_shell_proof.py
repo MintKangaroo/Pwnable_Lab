@@ -44,6 +44,16 @@ def _compile(tmp_path):
     return out
 
 
+def test_task_count_estimate_is_positive_on_linux():
+    from pwnable_lab.sandbox.runner import _estimate_task_count
+
+    count = _estimate_task_count()
+    if _SUPPORTED:
+        # 셸 spawn 경로의 NPROC 상한 = 이 추정치 + headroom. 태스크(스레드 포함)를
+        # 세므로 프로세스 수보다 크고, fork-bomb 을 유한 바운드하는 근거가 된다.
+        assert count > 0
+
+
 @_gated
 def test_verify_shell_runs_a_command(tmp_path):
     out = _compile(tmp_path)
