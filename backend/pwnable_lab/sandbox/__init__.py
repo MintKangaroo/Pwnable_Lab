@@ -31,10 +31,12 @@ from pwnable_lab.sandbox.runner import (
     ExploitVerification,
     OffsetConfirmation,
     SandboxLimits,
+    ShellProof,
     confirm_return_offset,
     run_two_stage,
     run_with_input,
     verify_payload,
+    verify_shell,
 )
 
 __all__ = [
@@ -42,6 +44,7 @@ __all__ = [
     "ExploitVerification",
     "OffsetConfirmation",
     "SandboxLimits",
+    "ShellProof",
     "auto_ret2libc_core",
     "auto_ret2libc_in_container",
     "confirm_offset_in_container",
@@ -55,4 +58,5 @@ __all__ = [
     "verify_exploit_in_container",
     "verify_exploit_in_process",
     "verify_payload",
+    "verify_shell",
 ]

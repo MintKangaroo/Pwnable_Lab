@@ -25,8 +25,10 @@ import ctypes
 import os
 import platform
 import resource
+import select
 import signal
 import time
+import tty
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -158,8 +160,14 @@ def _require_supported_platform() -> None:
         )
 
 
-def _apply_child_limits(limits: SandboxLimits) -> None:
-    """자식 프로세스에서 exec 직전에 호출. 실패해도 실행은 계속(best-effort)."""
+def _apply_child_limits(limits: SandboxLimits, *, cap_processes: bool = True) -> None:
+    """자식 프로세스에서 exec 직전에 호출. 실패해도 실행은 계속(best-effort).
+
+    ``cap_processes=False`` 면 ``RLIMIT_NPROC`` 를 걸지 않는다. NPROC 은 **실사용자
+    전체(호스트 공유)** 프로세스를 세므로, 셸을 spawn 해야 하는 경로(fork 필수)에서는
+    바쁜 호스트에서 정상 fork 를 막고 fork-bomb 보호도 못 한다 — 그 보호는 컨테이너
+    ``--pids-limit`` 가 담당한다. 시간/메모리 상한과 프로세스그룹 SIGKILL 은 유지된다.
+    """
     resource.setrlimit(resource.RLIMIT_CPU, (limits.cpu_seconds, limits.cpu_seconds))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
@@ -170,12 +178,13 @@ def _apply_child_limits(limits: SandboxLimits) -> None:
         )
     except (ValueError, OSError):
         pass
-    try:
-        resource.setrlimit(
-            resource.RLIMIT_NPROC, (limits.max_processes, limits.max_processes)
-        )
-    except (ValueError, OSError):
-        pass
+    if cap_processes:
+        try:
+            resource.setrlimit(
+                resource.RLIMIT_NPROC, (limits.max_processes, limits.max_processes)
+            )
+        except (ValueError, OSError):
+            pass
 
 
 def run_with_input(
@@ -763,3 +772,109 @@ def _supervise_two_stage(
             observation = _read_crash(lib, pid, sig, limits)
             _kill_group(pid, timed_out=False, note=None)
             return finish(observation)
+
+
+# --- PTY 셸 증명 (ret2system/ret2libc 가 실제 셸을 띄우는지) -----------------
+
+
+@dataclass
+class ShellProof:
+    """spawn 된 셸에서 명령이 실제로 실행됐는지에 대한 증명."""
+
+    shell_spawned: bool
+    marker: str
+    command: str
+    output: bytes
+
+    def as_dict(self) -> dict:
+        return {
+            "shell_spawned": self.shell_spawned,
+            "marker": self.marker,
+            "command": self.command,
+            "output": self.output.decode("utf-8", "replace"),
+            "output_hex": self.output.hex(),
+        }
+
+
+def verify_shell(
+    binary_path: str,
+    payload: bytes,
+    *,
+    marker: str,
+    command: str | None = None,
+    limits: SandboxLimits | None = None,
+) -> ShellProof:
+    """PTY 로 payload 를 주입해 **셸이 실제로 명령을 실행**하는지 증명한다.
+
+    ret2system/ret2libc payload 가 ``system("/bin/sh")`` 로 셸을 띄우면, 그 셸은
+    PTY(tty)에 붙어 대화형으로 stdin 을 읽는다. 우리가 ``echo <marker>`` 를 보내면
+    셸이 실행해 marker 를 출력하므로, marker 관측 = 셸 획득 증명이다(파이프의 stdio
+    버퍼링 문제를 tty 라인 규율이 우회한다).
+
+    tty 라인 규율이 payload 의 제어바이트를 해석하지 않도록 raw 모드로 둔다.
+    """
+
+    _require_supported_platform()
+    limits = limits or SandboxLimits()
+    limits.validate()
+    if not os.path.isfile(binary_path):
+        raise SandboxError(f"실행 대상 파일이 없습니다: {binary_path}")
+
+    cmd = command or f"echo {marker}"
+    master, slave = os.openpty()
+    tty.setraw(slave)  # payload 바이트 보존(특수문자 해석 방지)
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - 자식 프로세스
+        try:
+            os.setsid()
+            os.dup2(slave, 0)
+            os.dup2(slave, 1)
+            os.dup2(slave, 2)
+            os.close(master)
+            os.close(slave)
+            # 셸 spawn 은 fork 가 필수라 NPROC 상한을 걸지 않는다(위 함수 주석 참조).
+            _apply_child_limits(limits, cap_processes=False)
+            os.execv(binary_path, [binary_path])
+        except BaseException:
+            os._exit(127)
+        os._exit(127)
+
+    os.close(slave)
+    marker_bytes = marker.encode()
+    output = bytearray()
+    try:
+        os.write(master, payload + b"\n")
+        time.sleep(0.15)
+        os.write(master, cmd.encode() + b"\n")
+    except OSError:
+        pass
+
+    deadline = time.monotonic() + limits.wall_seconds
+    cap = limits.capture_stdout_bytes
+    while time.monotonic() < deadline and len(output) < cap:
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(master, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        output.extend(chunk)
+        if marker_bytes in output:
+            break
+
+    try:
+        os.close(master)
+    except OSError:
+        pass
+    _kill_group(pid, timed_out=False, note=None)
+
+    return ShellProof(
+        shell_spawned=marker_bytes in bytes(output),
+        marker=marker,
+        command=cmd,
+        output=bytes(output[:cap]),
+    )

