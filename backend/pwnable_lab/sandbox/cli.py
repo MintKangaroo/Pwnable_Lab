@@ -34,6 +34,7 @@ from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox import (
     SandboxLimits,
     auto_ret2libc_core,
+    auto_ret2system_core,
     confirm_return_offset,
     require_sandbox_boundary,
     verify_payload,
@@ -67,7 +68,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--auto-ret2libc",
         action="store_true",
         dest="auto_ret2libc",
-        help="완전 자동 2단계 ret2libc(leak→base→system). --offset 필요.",
+        help="완전 자동 2단계 ret2libc(leak→base→system→셸). --offset 필요.",
+    )
+    parser.add_argument(
+        "--auto-ret2system",
+        action="store_true",
+        dest="auto_ret2system",
+        help="완전 자동 ret2system(pop rdi→/bin/sh→system→셸). --offset 필요.",
     )
     parser.add_argument("--offset", type=int, default=None, help="반환 오프셋")
     parser.add_argument(
@@ -152,6 +159,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             output = auto_ret2libc_core(binary_path, offset=args.offset, limits=limits)
+        elif args.auto_ret2system:
+            if args.offset is None:
+                print(
+                    "[sandbox-cli] --auto-ret2system 은 --offset 이 필요합니다.",
+                    file=sys.stderr,
+                )
+                return 3
+            print(
+                f"[sandbox-cli] auto_ret2system 실행 (offset={args.offset})",
+                file=sys.stderr,
+            )
+            output = auto_ret2system_core(
+                binary_path, offset=args.offset, limits=limits
+            )
         elif args.verify:
             if args.offset is None or args.target is None:
                 print(

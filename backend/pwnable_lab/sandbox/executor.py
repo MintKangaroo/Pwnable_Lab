@@ -162,6 +162,16 @@ def auto_ret2libc_in_container(
     )
 
 
+def auto_ret2system_in_container(
+    data: bytes, *, offset: int, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 완전 자동 ret2system(셸 증명까지)을 수행한다."""
+
+    return _run_container(
+        settings, ["--stdin", "--auto-ret2system", "--offset", str(offset)], data
+    )
+
+
 def _run_container(
     settings: _ExecutorSettings, cli_args: list[str], data: bytes
 ) -> dict:
