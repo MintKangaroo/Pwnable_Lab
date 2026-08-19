@@ -189,6 +189,11 @@ def _canonical_symbol(name: str) -> str:
         fortified = _FORTIFIED_ALIASES.get(fortified, fortified)
         if fortified in _DANGEROUS:
             return fortified
+    # glibc 는 C99 scanf 계열을 __isoc99_scanf/__isoc99_sscanf 로 내보낸다.
+    if base.startswith("__isoc99_"):
+        stripped = base[len("__isoc99_") :]
+        if stripped in _DANGEROUS:
+            return stripped
     return base
 
 
