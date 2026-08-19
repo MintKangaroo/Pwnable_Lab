@@ -68,6 +68,7 @@ _OFFSET_CORPUS = [
     ("read64", "void vuln(void){ char buf[64]; read(0, buf, 256); }", 200),
     ("read96", "void vuln(void){ char buf[96]; read(0, buf, 256); }", 200),
     ("fgets64", "void vuln(void){ char buf[64]; fgets(buf, 200, stdin); }", 150),
+    ("scanf64", 'void vuln(void){ char buf[64]; scanf("%s", buf); }', 300),
 ]
 
 
@@ -84,6 +85,17 @@ def test_static_offset_matches_dynamic_oracle(tmp_path, name, body, pattern_leng
     assert (
         static == dynamic.offset
     ), f"{name}: static={static} != dynamic(oracle)={dynamic.offset}"
+
+
+def test_glibc_scanf_alias_is_detected(tmp_path):
+    """glibc 의 __isoc99_scanf 별칭도 scanf 취약점으로 인식돼야 한다."""
+    from pwnable_lab.analyzer.vuln_scan import scan_vulns
+
+    binary = _compile(
+        tmp_path, "scanfdet", 'void vuln(void){ char buf[64]; scanf("%s", buf); }'
+    )
+    findings = scan_vulns(parse_elf(binary.read_bytes()))
+    assert any(f.symbol == "scanf" for f in findings), "scanf(__isoc99_scanf) 미탐지"
 
 
 def test_checksec_matches_compile_flags(tmp_path):
