@@ -244,7 +244,10 @@ def _find_call_sites(
                 continue
             canonical = targets[target]
             before = instructions[max(0, index - 8) : index]
-            window = instructions[max(0, index - 3) : min(len(instructions), index + 3)]
+            # 버퍼 주소를 적재하는 ``lea reg, [rbp - N]`` 이 인자 setup 이 긴 호출
+            # (예: read(fd, buf, n))에서는 call 4~5 명령 전에 올 수 있으므로,
+            # surrounding window 를 argument 추정 window(-8)와 같게 넓힌다.
+            window = instructions[max(0, index - 8) : min(len(instructions), index + 3)]
             arguments = (
                 _estimate_x64_arguments(before)
                 if image.bits == 64
