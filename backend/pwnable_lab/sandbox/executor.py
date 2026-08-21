@@ -172,6 +172,20 @@ def auto_ret2system_in_container(
     )
 
 
+def auto_ret2win_pie_in_container(
+    data: bytes, *, offset: int, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 PIE 자동 ret2win(base 관측→rebase→셸 증명)을 수행한다.
+
+    로드 base 관측(``resolve_pie_base``)·ASLR-off 검증이 모두 실행 프로세스 안에서
+    일어나야 하므로 CLI ``--auto-ret2win-pie`` 로 위임한다.
+    """
+
+    return _run_container(
+        settings, ["--stdin", "--auto-ret2win-pie", "--offset", str(offset)], data
+    )
+
+
 def _run_container(
     settings: _ExecutorSettings, cli_args: list[str], data: bytes
 ) -> dict:

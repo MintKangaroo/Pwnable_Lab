@@ -52,6 +52,8 @@ from pwnable_lab.sandbox import (
     auto_ret2libc_in_container,
     auto_ret2system_core,
     auto_ret2system_in_container,
+    auto_ret2win_pie_core,
+    auto_ret2win_pie_in_container,
     confirm_offset_in_container,
     confirm_offset_in_process,
     require_isolation_marker,
@@ -347,8 +349,12 @@ class AnalysisService:
         bits = image.bits or 64
         if is_pie(image):
             # PIE: 심볼/가젯이 base 상대라 절대주소 자동 익스가 성립하지 않는다.
-            # PIE base leak 이 선행돼야 하며, 그건 멀티스테이지(run_two_stage)로만 가능.
-            return {"attempted": False, "reason": "pie-needs-base-leak"}
+            # 로드 base 를 로컬 관측(ASLR-off)해 rebase 후 ret2win 을 검증한다.
+            if bits != 64:
+                return {"attempted": False, "reason": "pie-amd64-only"}
+            if ret2win_target(image) is None:
+                return {"attempted": False, "reason": "pie-no-win-target"}
+            return self._auto_ret2win_pie(data, offset)
         attempts: list[dict] = []
 
         win = ret2win_target(image)
@@ -430,6 +436,33 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_ret2system_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _auto_ret2win_pie(self, data: bytes, offset: int) -> dict:
+        """PIE 자동 ret2win 을 executor 별로 위임한다(base 관측→rebase→셸 증명).
+
+        로드 base 관측(``resolve_pie_base``)과 ASLR-off 검증이 모두 실행 프로세스
+        안에서 일어나야 하므로, container 는 컨테이너 안의 CLI 로, inprocess 는
+        temp 파일에 코어를 직접 돌린다(ret2system 위임과 동일 구조).
+        """
+
+        if self.settings.sandbox_executor == "container":
+            return auto_ret2win_pie_in_container(
+                data, offset=offset, settings=self.settings
+            )
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_ret2win_pie_core(path, offset=offset, limits=limits)
         finally:
             try:
                 os.unlink(path)

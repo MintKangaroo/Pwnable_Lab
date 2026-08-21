@@ -81,9 +81,11 @@ def test_auto_exploit_pie_verification_reports_pie(tmp_path):
         capture_output=True,
     )
     result = _service().auto_exploit(out.read_bytes(), pattern_length=400)
-    # 오프셋 확정은 PIE 에서도 되지만, 절대주소 검증은 PIE 를 명시 거부.
+    # 오프셋 확정은 PIE 에서도 된다. PIE 자동 익스는 로드 base 를 관측해 ret2win 을
+    # 시도하지만, 이 바이너리엔 이름 기반 win 함수(never 는 힌트 아님)가 없어 대상
+    # 부재를 명시한다(win 함수가 있으면 base 관측→rebase→셸 증명으로 진행).
     assert result["verification"]["attempted"] is False
-    assert result["verification"]["reason"] == "pie-needs-base-leak"
+    assert result["verification"]["reason"] == "pie-no-win-target"
 
 
 @pytest.mark.skipif(
