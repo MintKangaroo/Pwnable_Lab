@@ -64,6 +64,26 @@ _RBP_DISP = re.compile(r"rbp\s*-\s*(0x[0-9a-fA-F]+|\d+)")
 _LEA_RBP = re.compile(r"lea\s+(\w+)\s*,\s*\[\s*rbp\s*-\s*(0x[0-9a-fA-F]+|\d+)")
 
 
+def _is_clean_ret(instruction: str) -> bool:
+    """체인에 안전한 종단인지 — bare ``ret`` 또는 ``ret 0`` 만 참.
+
+    ``ret <nonzero imm>``(0xC2, 예: ``ret 0x349``)은 반환 후 rsp 를 imm 만큼 추가로
+    올려 뒤따르는 체인 워드를 어긋나게 하므로 배제한다. 정적 glibc 등에는 이런
+    ``ret imm`` 종단 가젯이 흔해, 이를 걸러내지 않으면 조용히 깨진 체인을 만든다.
+    """
+
+    text = instruction.strip().lower()
+    if text == "ret":
+        return True
+    parts = text.split()
+    if len(parts) == 2 and parts[0] == "ret":
+        try:
+            return int(parts[1], 0) == 0
+        except ValueError:
+            return False
+    return False
+
+
 @dataclass
 class Primitive:
     """공격에 필요한 1차 재료 하나의 유무와 근거."""
@@ -216,14 +236,15 @@ def _find_gadget(context: _Context, pattern: list[str]) -> Gadget | None:
         body = [text.strip().lower() for text in gadget.instructions]
         if body == normalized:
             return gadget
-    # ``pop rdi ; ret`` 을 정확히 못 찾으면 pop rdi 로 시작하는 최단 gadget 을 허용.
+    # ``pop rdi ; ret`` 을 정확히 못 찾으면 pop rdi 로 시작하는 최단 gadget 을 허용하되
+    # 종단이 **클린 ret** 인 것만(``ret imm`` 종단은 rsp 를 어긋나게 하므로 배제).
     if normalized and normalized[0].startswith("pop"):
         candidates = [
             gadget
             for gadget in context.gadgets
             if gadget.instructions
             and gadget.instructions[0].strip().lower() == normalized[0]
-            and gadget.instructions[-1].strip().lower().startswith("ret")
+            and _is_clean_ret(gadget.instructions[-1])
         ]
         candidates.sort(key=lambda gadget: len(gadget.instructions))
         if candidates:
@@ -966,16 +987,30 @@ def ret2libc_plan(image: ElfImage) -> dict | None:
     }
 
 
-def _find_pop_rdi(image: ElfImage) -> int | None:
-    """``pop rdi ; ret`` 로 시작·끝나는 최단 가젯의 주소(없으면 None)."""
+def find_clean_pop(image: ElfImage, reg: str) -> int | None:
+    """``pop <reg> ; ret`` **정확히 2명령**의 클린 가젯 주소(없으면 None).
 
-    best = None
+    체인에 그대로 끼울 수 있으려면 부작용이 없어야 한다: 중간 명령이 다른 인자
+    레지스터·메모리·rsp 를 건드리거나 종단이 ``ret imm`` 이면 체인이 어긋난다.
+    보수적으로 **순수 2명령 ``pop <reg> ; ret``(클린 ret)** 만 인정하고, 여러 개면
+    최저 주소를 고른다(non-PIE 절대주소; 어느 것이든 등가). 클린 가젯이 없으면
+    None → 해당 기법을 조용히 깨진 체인으로 시도하지 않고 포기한다.
+    """
+
+    first = f"pop {reg.strip().lower()}"
+    best: int | None = None
     for gadget in scan_gadgets(image).gadgets:
         body = [t.strip().lower() for t in gadget.instructions]
-        if body and body[0] == "pop rdi" and body[-1].startswith("ret"):
-            if best is None or len(body) < best[1]:
-                best = (gadget.address, len(body))
-    return None if best is None else best[0]
+        if len(body) == 2 and body[0] == first and _is_clean_ret(body[1]):
+            if best is None or gadget.address < best:
+                best = gadget.address
+    return best
+
+
+def _find_pop_rdi(image: ElfImage) -> int | None:
+    """``pop rdi ; ret`` 클린 가젯의 주소(없으면 None)."""
+
+    return find_clean_pop(image, "rdi")
 
 
 def leak_plan(image: ElfImage) -> dict | None:
