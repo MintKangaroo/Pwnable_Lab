@@ -190,11 +190,12 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
 - **auto-exploit**: 정적 전략 + 동적 확정 오프셋을 pwntools 스켈레톤에 주입하고,
   ret2win(정렬 재시도) → ret2system(pop rdi→/bin/sh→system 자동 구성)을 순서대로
   **무입력 자동 검증**
-- **PIE 자동 ret2win**: PIE(ET_DYN)는 로드 base 를 **로컬 관측**(ASLR-off,
-  `personality`+`/proc/pid/maps`)해 win/`ret` 을 rebase 한 뒤 같은 조건에서 셸/제어
-  이전을 증명 — auto-exploit 이 PIE·amd64·win 함수를 감지하면 자동으로 이 경로
-  (`technique="ret2win-pie"`)를 탄다. 정직성: base 가 로컬 관측이라 *로컬* 익스
-  가능성 증명이며 원격 ASLR 우회가 아님(`aslr="disabled-for-local-proof"` 명시)
+- **PIE 자동 익스(ret2win-pie / ret2system-pie)**: PIE(ET_DYN)는 로드 base 를
+  **로컬 관측**(ASLR-off, `personality`+`/proc/pid/maps`)해 win/system 체인을 rebase
+  한 뒤 같은 조건에서 셸/제어 이전을 증명 — auto-exploit 이 PIE·amd64면 비 PIE 와
+  같은 순서로 ret2win-pie → (win 없으면) ret2system-pie 로 자동 폴백해 셸을 증명한다.
+  정직성: base 가 로컬 관측이라 *로컬* 익스 가능성 증명이며 원격 ASLR 우회가 아님
+  (`aslr="disabled-for-local-proof"` 명시)
 - **익스 검증**: 구성한 payload/ROP 체인을 실제 주입해 제어 흐름 탈취를 확인
   (마커 매치 또는 control-transfer)
 - **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,
