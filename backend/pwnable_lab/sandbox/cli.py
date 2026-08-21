@@ -33,6 +33,7 @@ from pwnable_lab.errors import SandboxError
 from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox import (
     SandboxLimits,
+    auto_execve_core,
     auto_ret2libc_core,
     auto_ret2system_core,
     auto_ret2system_pie_core,
@@ -77,6 +78,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="auto_ret2system",
         help="완전 자동 ret2system(pop rdi→/bin/sh→system→셸). --offset 필요.",
+    )
+    parser.add_argument(
+        "--auto-execve",
+        action="store_true",
+        dest="auto_execve",
+        help="완전 자동 execve syscall ROP(pop*→/bin/sh→syscall→셸). --offset 필요.",
     )
     parser.add_argument(
         "--auto-ret2win-pie",
@@ -187,6 +194,18 @@ def main(argv: list[str] | None = None) -> int:
             output = auto_ret2system_core(
                 binary_path, offset=args.offset, limits=limits
             )
+        elif args.auto_execve:
+            if args.offset is None:
+                print(
+                    "[sandbox-cli] --auto-execve 는 --offset 이 필요합니다.",
+                    file=sys.stderr,
+                )
+                return 3
+            print(
+                f"[sandbox-cli] auto_execve 실행 (offset={args.offset})",
+                file=sys.stderr,
+            )
+            output = auto_execve_core(binary_path, offset=args.offset, limits=limits)
         elif args.auto_ret2win_pie:
             if args.offset is None:
                 print(

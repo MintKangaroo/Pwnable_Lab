@@ -25,6 +25,7 @@ from pwnable_lab.analyzer.gadgets import (
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
+    execve_plan,
     find_ret_gadget,
     inject_confirmed_offset,
     is_pie,
@@ -48,6 +49,8 @@ from pwnable_lab.pe.analyzer import (
 from pwnable_lab.pe.parser import parse_pe
 from pwnable_lab.sandbox import (
     SandboxLimits,
+    auto_execve_core,
+    auto_execve_in_container,
     auto_ret2libc_core,
     auto_ret2libc_in_container,
     auto_ret2system_core,
@@ -340,7 +343,7 @@ class AnalysisService:
         }
 
     def _auto_verify(self, data: bytes, offset: int) -> dict:
-        """확정 오프셋으로 익스 기법을 순서대로 자동 시도한다(ret2win → ret2system).
+        """확정 오프셋으로 익스 기법을 순서대로 자동 시도한다(ret2win → ret2system → execve).
 
         각 시도는 격리 샌드박스에서 실제 payload 를 실행한다. 성공한 첫 기법을
         반환하고, 모두 실패하면 첫 시도를 대표로 두되 ``attempts`` 에 전 시도를
@@ -361,6 +364,12 @@ class AnalysisService:
 
         if ret2system_plan(image) is not None:
             attempts.append(self._auto_ret2system(data, offset))
+            if attempts[-1]["succeeded"]:
+                return self._with_attempts(attempts[-1], attempts)
+
+        # system 이 없는(주로 정적 링크) 바이너리는 execve syscall ROP 로 시도한다.
+        if execve_plan(image) is not None:
+            attempts.append(self._auto_execve(data, offset))
             if attempts[-1]["succeeded"]:
                 return self._with_attempts(attempts[-1], attempts)
 
@@ -432,6 +441,30 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_ret2system_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _auto_execve(self, data: bytes, offset: int) -> dict:
+        """완전 자동 execve syscall ROP 를 executor 별로 위임한다(셸 획득까지 증명).
+
+        ``_auto_ret2system`` 과 동일 구조: container 는 컨테이너 안의 CLI
+        ``--auto-execve`` 로, inprocess 는 temp 파일에 코어를 직접 돌린다.
+        """
+
+        if self.settings.sandbox_executor == "container":
+            return auto_execve_in_container(data, offset=offset, settings=self.settings)
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_execve_core(path, offset=offset, limits=limits)
         finally:
             try:
                 os.unlink(path)
