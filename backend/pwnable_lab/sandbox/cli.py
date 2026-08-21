@@ -35,6 +35,7 @@ from pwnable_lab.sandbox import (
     SandboxLimits,
     auto_ret2libc_core,
     auto_ret2system_core,
+    auto_ret2win_pie_core,
     confirm_return_offset,
     require_sandbox_boundary,
     verify_payload,
@@ -75,6 +76,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="auto_ret2system",
         help="완전 자동 ret2system(pop rdi→/bin/sh→system→셸). --offset 필요.",
+    )
+    parser.add_argument(
+        "--auto-ret2win-pie",
+        action="store_true",
+        dest="auto_ret2win_pie",
+        help="PIE 자동 ret2win(base 관측→rebase→셸/제어 증명). --offset 필요.",
     )
     parser.add_argument("--offset", type=int, default=None, help="반환 오프셋")
     parser.add_argument(
@@ -171,6 +178,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             output = auto_ret2system_core(
+                binary_path, offset=args.offset, limits=limits
+            )
+        elif args.auto_ret2win_pie:
+            if args.offset is None:
+                print(
+                    "[sandbox-cli] --auto-ret2win-pie 는 --offset 이 필요합니다.",
+                    file=sys.stderr,
+                )
+                return 3
+            print(
+                f"[sandbox-cli] auto_ret2win_pie 실행 (offset={args.offset})",
+                file=sys.stderr,
+            )
+            output = auto_ret2win_pie_core(
                 binary_path, offset=args.offset, limits=limits
             )
         elif args.verify:

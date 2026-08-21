@@ -42,6 +42,9 @@ _PTRACE_CONT = 7
 _PTRACE_KILL = 8
 _PTRACE_GETREGS = 12
 
+# personality(2) ADDR_NO_RANDOMIZE: 자식의 PIE/스택 로드 base 를 결정적으로 고정.
+_ADDR_NO_RANDOMIZE = 0x0040000
+
 # user_regs_struct(x86-64) 는 27개의 unsigned long. 필요한 필드의 인덱스만 사용.
 _REG_COUNT = 27
 _RIP_INDEX = 16
@@ -155,6 +158,23 @@ def _libc() -> ctypes.CDLL:
     return lib
 
 
+def _disable_aslr() -> None:
+    """personality(ADDR_NO_RANDOMIZE) 로 자식의 ASLR 을 끈다(best-effort).
+
+    PIE 자동 익스는 로드 base 를 *로컬 관측*(:func:`resolve_pie_base`)으로 확정한
+    뒤 그 base 로 payload 를 rebase 한다. 관측 실행과 검증 실행의 base 가 반드시
+    같아야 하므로 양쪽 모두 ASLR 을 꺼 base 를 결정적으로 만든다. 이는 원격 ASLR
+    우회가 아니라 **로컬 익스 가능성 증명**이다(docs/AUTO_EXPLOIT_SANDBOX.md 참조).
+    """
+    try:
+        lib = ctypes.CDLL("libc.so.6", use_errno=True)
+        lib.personality.restype = ctypes.c_int
+        lib.personality.argtypes = [ctypes.c_ulong]
+        lib.personality(_ADDR_NO_RANDOMIZE)
+    except OSError:  # pragma: no cover - 플랫폼 의존
+        pass
+
+
 def _require_supported_platform() -> None:
     if platform.system() != "Linux" or platform.machine() not in {"x86_64", "AMD64"}:
         raise SandboxError(
@@ -225,6 +245,7 @@ def run_with_input(
     *,
     limits: SandboxLimits | None = None,
     capture_stdout: bool = False,
+    disable_aslr: bool = False,
 ) -> CrashObservation:
     """``binary_path`` 를 ``stdin_bytes`` 로 1회 실행하고 크래시를 관측한다.
 
@@ -233,6 +254,8 @@ def run_with_input(
     ``CrashObservation.stdout`` 에 ``limits.capture_stdout_bytes`` 까지 담는다.
     (stderr 는 항상 버린다. 대상의 stdout 이 full-buffered 라 크래시 시점에
     flush 되지 않았을 수 있음에 유의 — 성공 판정을 stdout 에만 의존하지 말 것.)
+    ``disable_aslr=True`` 면 자식의 ASLR 을 꺼 로드 base 를 결정적으로 만든다
+    (PIE 자동 익스에서 관측 base 와 검증 base 를 일치시키기 위함).
     """
 
     _require_supported_platform()
@@ -260,6 +283,8 @@ def run_with_input(
             else:
                 os.dup2(devnull, 1)
             os.dup2(devnull, 2)
+            if disable_aslr:
+                _disable_aslr()
             _apply_child_limits(limits)
             lib.ptrace(_PTRACE_TRACEME, 0, None, None)
             os.execv(binary_path, [binary_path])
@@ -590,6 +615,7 @@ def verify_payload(
     success_markers: list[str] | tuple[str, ...] = (),
     limits: SandboxLimits | None = None,
     append_newline: bool = True,
+    disable_aslr: bool = False,
 ) -> ExploitVerification:
     """``payload`` 를 stdin 으로 주입해 익스가 실제로 먹히는지 관측한다.
 
@@ -604,7 +630,11 @@ def verify_payload(
 
     stdin_bytes = payload + b"\n" if append_newline else payload
     observation = run_with_input(
-        binary_path, stdin_bytes, limits=limits, capture_stdout=True
+        binary_path,
+        stdin_bytes,
+        limits=limits,
+        capture_stdout=True,
+        disable_aslr=disable_aslr,
     )
     text = observation.stdout.decode("utf-8", "replace")
     matched = [m for m in success_markers if m and m in text]
@@ -835,6 +865,7 @@ def verify_shell(
     marker: str,
     command: str | None = None,
     limits: SandboxLimits | None = None,
+    disable_aslr: bool = False,
 ) -> ShellProof:
     """PTY 로 payload 를 주입해 **셸이 실제로 명령을 실행**하는지 증명한다.
 
@@ -865,6 +896,8 @@ def verify_shell(
             os.dup2(slave, 2)
             os.close(master)
             os.close(slave)
+            if disable_aslr:
+                _disable_aslr()
             # 셸 spawn 은 fork 가 필수라 NPROC 상한을 걸지 않는다(위 함수 주석 참조).
             _apply_child_limits(limits, process_headroom=limits.shell_process_headroom)
             os.execv(binary_path, [binary_path])
@@ -1010,3 +1043,103 @@ def run_two_stage_shell(
         output=bytes(output[:cap]),
     )
     return proof, (first_line or b"")
+
+
+# --- PIE 로드 base 로컬 관측 ------------------------------------------------
+
+
+@dataclass
+class PieBaseResolution:
+    """PIE 바이너리의 런타임 로드 base 를 로컬에서 관측한 결과.
+
+    ASLR 을 끈 자식을 exec 직후(exec-stop) 정지시키고 ``/proc/<pid>/maps`` 에서
+    대상 바이너리의 최저 매핑 주소를 base 로 읽는다. base 는 결정적(ASLR-off)이라
+    같은 조건의 검증 실행과 정확히 일치한다. 이는 원격 ASLR 우회가 아니라 **로컬
+    익스 가능성 증명**을 위한 관측 오라클이다.
+    """
+
+    confirmed: bool
+    base: int | None
+    note: str | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "confirmed": self.confirmed,
+            "base": self.base,
+            "base_hex": None if self.base is None else f"0x{self.base:x}",
+            "note": self.note,
+        }
+
+
+def _read_pie_base(pid: int, binary_path: str) -> int | None:
+    """``/proc/<pid>/maps`` 에서 대상 바이너리의 최저 매핑 주소(로드 base)를 읽는다.
+
+    표준 PIE 는 첫 LOAD 세그먼트의 vaddr 이 0 이므로 최저 매핑 시작 = 로드 base 다
+    (ELF 심볼 st_value 에 그대로 더하면 런타임 주소).
+    """
+    target = os.path.realpath(binary_path)
+    base: int | None = None
+    try:
+        with open(f"/proc/{pid}/maps", encoding="utf-8") as maps:
+            for line in maps:
+                parts = line.split()
+                if len(parts) < 6:
+                    continue
+                path = parts[5]
+                if path != target and os.path.realpath(path) != target:
+                    continue
+                start = int(parts[0].split("-", 1)[0], 16)
+                base = start if base is None else min(base, start)
+    except OSError:
+        return None
+    return base
+
+
+def resolve_pie_base(
+    binary_path: str, *, limits: SandboxLimits | None = None
+) -> PieBaseResolution:
+    """ASLR 을 끈 자식을 exec-stop 에서 정지시켜 PIE 로드 base 를 관측한다.
+
+    자식은 ``PTRACE_TRACEME`` 후 execv 하고, 첫 SIGTRAP(exec-stop) 에서 새 이미지가
+    이미 매핑돼 있어 ``/proc/<pid>/maps`` 로 base 를 회수할 수 있다. 관측 후 즉시
+    프로세스그룹을 종료한다. stdin/stdout/stderr 는 모두 /dev/null.
+    """
+
+    _require_supported_platform()
+    limits = limits or SandboxLimits()
+    limits.validate()
+    if not os.path.isfile(binary_path):
+        raise SandboxError(f"실행 대상 파일이 없습니다: {binary_path}")
+
+    lib = _libc()
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - 자식 프로세스
+        try:
+            os.setsid()
+            devnull_r = os.open(os.devnull, os.O_RDONLY)
+            devnull_w = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull_r, 0)
+            os.dup2(devnull_w, 1)
+            os.dup2(devnull_w, 2)
+            _disable_aslr()
+            _apply_child_limits(limits)
+            lib.ptrace(_PTRACE_TRACEME, 0, None, None)
+            os.execv(binary_path, [binary_path])
+        except BaseException:
+            os._exit(127)
+        os._exit(127)
+
+    deadline = time.monotonic() + limits.wall_seconds
+    try:
+        if not _wait_stop(pid, deadline):
+            return PieBaseResolution(
+                confirmed=False, base=None, note="exec 정지 대기 타임아웃/조기 종료"
+            )
+        base = _read_pie_base(pid, binary_path)
+        if base is None:
+            return PieBaseResolution(
+                confirmed=False, base=None, note="maps 에서 로드 base 를 찾지 못함"
+            )
+        return PieBaseResolution(confirmed=True, base=base)
+    finally:
+        _kill_group(pid, timed_out=False, note=None)
