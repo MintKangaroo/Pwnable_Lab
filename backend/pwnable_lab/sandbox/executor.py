@@ -172,6 +172,16 @@ def auto_ret2system_in_container(
     )
 
 
+def auto_execve_in_container(
+    data: bytes, *, offset: int, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 완전 자동 execve syscall ROP(셸 증명까지)를 수행한다."""
+
+    return _run_container(
+        settings, ["--stdin", "--auto-execve", "--offset", str(offset)], data
+    )
+
+
 def auto_ret2win_pie_in_container(
     data: bytes, *, offset: int, settings: _ExecutorSettings
 ) -> dict:

