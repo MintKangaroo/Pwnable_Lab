@@ -1932,6 +1932,39 @@ function ShellSession({ proof }) {
   );
 }
 
+function PieBaseNote({ ver }) {
+  // PIE 자동 익스(ret2win-pie / ret2system-pie)만: 로컬 관측 base·rebase 타깃·정직성.
+  if (!ver || ver.aslr !== 'disabled-for-local-proof') return null;
+  const runtime = ver.target_runtime_hex || ver.system_runtime_hex;
+  const label = ver.target_name ? `${ver.target_name}()` : 'system';
+  return (
+    <div className="pie-base-note">
+      <div className="pie-base-head">
+        <Badge tone="green">PIE base 로컬 관측</Badge>
+        <span className="pie-base-caption">ASLR-off 로컬 관측 · 원격 우회 아님</span>
+      </div>
+      <div className="pie-base-grid">
+        {ver.base_hex && (
+          <div className="runner-kv">
+            <span>로드 base</span>
+            <strong>
+              <code>{ver.base_hex}</code>
+            </strong>
+          </div>
+        )}
+        {runtime && (
+          <div className="runner-kv">
+            <span>{label} rebase</span>
+            <strong>
+              <code>{runtime}</code>
+            </strong>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RunnerResult({ state }) {
   if (state.status === 'running') return <Loading label="샌드박스에서 실행 중" />;
   if (state.status === 'error') {
@@ -1995,7 +2028,10 @@ function ExploitRunner({ sha }) {
       <section className="runner-card runner-headline">
         <div className="section-heading">
           <h3>Auto-Exploit</h3>
-          <span>오프셋 확정 → 스켈레톤 주입 → ret2win/ret2system 자동 검증</span>
+          <span>
+            오프셋 확정 → 스켈레톤 주입 → ret2win/ret2system 자동 검증 (PIE 는 base 로컬
+            관측 후 rebase)
+          </span>
         </div>
         <div className="runner-actions">
           <label className="runner-field">
@@ -2053,6 +2089,7 @@ function ExploitRunner({ sha }) {
                 </strong>
               </div>
             )}
+            <PieBaseNote ver={ver} />
             {ver?.shell_proof && <ShellSession proof={ver.shell_proof} />}
             {injectedPaths.map((p) => (
               <div key={p.id} className="path-section">

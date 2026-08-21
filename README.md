@@ -206,8 +206,9 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   프로세스그룹 SIGKILL + 컨테이너 격리. 게이트/격리 마커 미충족 시 `503`
 - **UI**: ELF Workspace 의 `Exploit Runner` 탭에서 auto-exploit / confirm-offset /
   libc leak / auto-ret2libc / verify-exploit 를 실행하고 결과(확정 오프셋, 주입된
-  스켈레톤, 유출 libc 주소·base, 그리고 **spawn 된 셸 세션 출력으로 셸 획득 증명**)
-  를 확인. 비활성 배포에서는 안내(503)로 처리
+  스켈레톤, 유출 libc 주소·base, **PIE 는 관측 로드 base·rebase 타깃과 "로컬 관측"
+  정직성 캡션**, 그리고 **spawn 된 셸 세션 출력으로 셸 획득 증명**)를 확인. 비활성
+  배포에서는 안내(503)로 처리
 
 ### 재사용된 정적 분석 기능
 
