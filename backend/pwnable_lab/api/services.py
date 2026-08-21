@@ -52,6 +52,8 @@ from pwnable_lab.sandbox import (
     auto_ret2libc_in_container,
     auto_ret2system_core,
     auto_ret2system_in_container,
+    auto_ret2system_pie_core,
+    auto_ret2system_pie_in_container,
     auto_ret2win_pie_core,
     auto_ret2win_pie_in_container,
     confirm_offset_in_container,
@@ -348,13 +350,7 @@ class AnalysisService:
         image = parse_elf(data)
         bits = image.bits or 64
         if is_pie(image):
-            # PIE: 심볼/가젯이 base 상대라 절대주소 자동 익스가 성립하지 않는다.
-            # 로드 base 를 로컬 관측(ASLR-off)해 rebase 후 ret2win 을 검증한다.
-            if bits != 64:
-                return {"attempted": False, "reason": "pie-amd64-only"}
-            if ret2win_target(image) is None:
-                return {"attempted": False, "reason": "pie-no-win-target"}
-            return self._auto_ret2win_pie(data, offset)
+            return self._auto_verify_pie(data, offset, image, bits)
         attempts: list[dict] = []
 
         win = ret2win_target(image)
@@ -442,6 +438,32 @@ class AnalysisService:
             except OSError:
                 pass
 
+    def _auto_verify_pie(self, data: bytes, offset: int, image, bits: int) -> dict:
+        """PIE 자동 익스: 로드 base 를 로컬 관측(ASLR-off)해 rebase 후 기법 시도.
+
+        비 PIE 경로(``_auto_verify``)와 같은 순서로 ret2win → ret2system 을 시도하되,
+        모든 절대주소를 관측 base 로 rebase 한다(win 함수가 없어도 ret2system 으로
+        셸 증명 가능). amd64 전용.
+        """
+
+        if bits != 64:
+            return {"attempted": False, "reason": "pie-amd64-only"}
+        attempts: list[dict] = []
+
+        if ret2win_target(image) is not None:
+            attempts.append(self._auto_ret2win_pie(data, offset))
+            if attempts[-1].get("succeeded"):
+                return self._with_attempts(attempts[-1], attempts)
+
+        if ret2system_plan(image) is not None:
+            attempts.append(self._auto_ret2system_pie(data, offset))
+            if attempts[-1].get("succeeded"):
+                return self._with_attempts(attempts[-1], attempts)
+
+        if attempts:
+            return self._with_attempts(attempts[0], attempts)
+        return {"attempted": False, "reason": "pie-no-technique"}
+
     def _auto_ret2win_pie(self, data: bytes, offset: int) -> dict:
         """PIE 자동 ret2win 을 executor 별로 위임한다(base 관측→rebase→셸 증명).
 
@@ -463,6 +485,32 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_ret2win_pie_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _auto_ret2system_pie(self, data: bytes, offset: int) -> dict:
+        """PIE 자동 ret2system 을 executor 별로 위임한다(base 관측→rebase→셸 증명).
+
+        win 함수가 없는 PIE 를 위한 경로. ``_auto_ret2win_pie`` 와 동일 구조로
+        container 는 CLI ``--auto-ret2system-pie`` 로, inprocess 는 코어를 직접 돌린다.
+        """
+
+        if self.settings.sandbox_executor == "container":
+            return auto_ret2system_pie_in_container(
+                data, offset=offset, settings=self.settings
+            )
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_ret2system_pie_core(path, offset=offset, limits=limits)
         finally:
             try:
                 os.unlink(path)
