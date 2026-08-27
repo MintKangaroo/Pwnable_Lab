@@ -54,6 +54,8 @@ from pwnable_lab.sandbox import (
     auto_execve_in_container,
     auto_execve_pie_core,
     auto_execve_pie_in_container,
+    auto_fmt_leak_pie_core,
+    auto_fmt_leak_pie_in_container,
     auto_ret2libc_core,
     auto_ret2libc_in_container,
     auto_ret2system32_core,
@@ -730,6 +732,40 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_ret2libc_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def auto_fmt_leak_pie(self, data: bytes) -> dict:
+        """PIE 포맷스트링 in-band leak 자동 익스: base 유출 → rebase ret2win → 셸.
+
+        다른 PIE 경로(로컬 base 관측)와 달리 대상이 흘리는 포맷스트링으로 base 를
+        런타임에 복원하므로 **ASLR 이 켜져 있어도 성립**하는 진짜 leak 이다. 오버플로
+        오프셋과 leak 인자 위치를 모두 자체 확정하므로 offset 인자가 필요 없다.
+
+        오프셋 확정·leak 캘리브레이션·2단계 셸 증명이 실행 프로세스 안에서 일어나야
+        하므로 container executor 는 컨테이너 안의 CLI(`--auto-fmt-leak-pie`)로 위임한다.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Auto fmt-leak PIE")
+        logger.warning(
+            "sandbox: auto fmt-leak PIE (executor=%s)", self.settings.sandbox_executor
+        )
+        if self.settings.sandbox_executor == "container":
+            return auto_fmt_leak_pie_in_container(data, settings=self.settings)
+
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_fmt_leak_pie_core(path, limits=limits)
         finally:
             try:
                 os.unlink(path)

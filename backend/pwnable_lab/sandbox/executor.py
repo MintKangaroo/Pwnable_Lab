@@ -182,6 +182,16 @@ def auto_execve_in_container(
     )
 
 
+def auto_fmt_leak_pie_in_container(data: bytes, *, settings: _ExecutorSettings) -> dict:
+    """일회용 컨테이너 안에서 PIE 포맷스트링 in-band leak 자동 익스를 수행한다.
+
+    오프셋 확정·leak 캘리브레이션·2단계 셸 증명이 모두 실행 프로세스 안에서
+    일어나야 하므로 CLI ``--auto-fmt-leak-pie`` 로 위임한다(오프셋은 자체 확정).
+    """
+
+    return _run_container(settings, ["--stdin", "--auto-fmt-leak-pie"], data)
+
+
 def auto_ret2system32_in_container(
     data: bytes, *, offset: int, settings: _ExecutorSettings
 ) -> dict:

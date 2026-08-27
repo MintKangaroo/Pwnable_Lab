@@ -953,6 +953,7 @@ def run_two_stage_shell(
     prelude: bytes = b"",
     command: str | None = None,
     limits: SandboxLimits | None = None,
+    disable_aslr: bool = False,
 ) -> tuple[ShellProof, bytes]:
     """PTY 로 2단계(leak→stage2)를 몰고, spawn 된 셸에 명령을 흘려 증명한다.
 
@@ -960,6 +961,10 @@ def run_two_stage_shell(
     셸을 띄우는" 흐름을 PTY 위에서 수행한다. tty 라인 규율 덕에 대상 stdout 이
     라인버퍼(무버퍼 setvbuf 불필요)라 유출이 즉시 flush 되고, 셸도 대화형으로
     ``echo <marker>`` 를 읽어 실행한다. 반환: ``(ShellProof, 유출된_첫_줄_bytes)``.
+
+    ``disable_aslr=True`` 면 자식의 ASLR 을 끈다. 포맷스트링 in-band leak 처럼
+    유출값으로 base 를 계산하는 익스는 ASLR 이 켜져 있어도 성립하지만(그게 핵심),
+    셸 증명의 재현성을 위해 끌 수 있다.
     """
 
     _require_supported_platform()
@@ -982,6 +987,8 @@ def run_two_stage_shell(
             os.dup2(slave, 2)
             os.close(master)
             os.close(slave)
+            if disable_aslr:
+                _disable_aslr()
             _apply_child_limits(limits, process_headroom=limits.shell_process_headroom)
             os.execv(binary_path, [binary_path])
         except BaseException:
