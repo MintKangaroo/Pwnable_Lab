@@ -153,3 +153,78 @@ def test_auto_exploit_falls_back_to_fmt_leak(fmt_bin):
     assert v["technique"] == "fmt-leak-pie"
     assert v["succeeded"] is True
     assert v["aslr"] == "defeated-via-inband-leak"
+
+
+# win 함수 없는 PIE — system + "/bin/sh" + pop rdi 가젯만 존재. fmt-leak 로 base 를
+# 복원해 ret2system 체인을 rebase 한다(실전 CTF 의 대다수 케이스).
+_SYS_SRC = """
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+__asm__(".global g_pop_rdi\\ng_pop_rdi: pop %rdi\\n ret\\n");
+void never(void){ char *s="/bin/sh"; system(s); }
+void vuln(void){
+    char buf[128];
+    read(0, buf, 120); buf[119] = 0;
+    printf(buf);            /* format-string leak */
+    fflush(stdout);
+    char buf2[64];
+    read(0, buf2, 300);     /* stack overflow */
+}
+int main(void){ setvbuf(stdout, 0, 2, 0); vuln(); return 0; }
+"""
+
+
+def _compile_fmt_sys_pie(tmp_path):
+    cc = _cc()
+    if cc is None:
+        return None
+    csrc = tmp_path / "fmtsys.c"
+    csrc.write_text(_SYS_SRC)
+    out = tmp_path / "fmtsys"
+    try:
+        subprocess.run(
+            [*cc, "-fno-stack-protector", "-pie", "-fPIE", "-o", str(out), str(csrc)],
+            check=True,
+            capture_output=True,
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return out
+
+
+@pytest.fixture()
+def fmt_sys_bin(tmp_path):
+    if not _SUPPORTED:
+        pytest.skip("Linux/x86-64 호스트 필요")
+    out = _compile_fmt_sys_pie(tmp_path)
+    if out is None:
+        pytest.skip("gcc/zig 로 PIE 바이너리 컴파일 불가")
+    return out
+
+
+def test_fmt_leak_ret2system_for_winless_pie(fmt_sys_bin):
+    """win 함수가 없는 PIE 는 fmt-leak → ret2system 체인으로 셸을 증명해야 한다."""
+    report = auto_fmt_leak_pie(str(fmt_sys_bin), limits=SandboxLimits(wall_seconds=8.0))
+    assert report["attempted"] is True
+    assert report["technique"] == "fmt-leak-pie"
+    assert report["chain"] == "ret2system"
+    assert report["succeeded"] is True
+    assert report["shell_proven"] is True
+    # ret2system 체인의 런타임 주소 = 유출 base + system 오프셋.
+    assert report["base_hex"] is not None
+    assert report["system_runtime_hex"] is not None
+    assert report["aslr"] == "defeated-via-inband-leak"
+
+
+def test_auto_exploit_falls_back_to_fmt_leak_ret2system(fmt_sys_bin):
+    """win 없는 2단계 PIE 도 auto_exploit 이 fmt-leak(ret2system) 로 폴백해야 한다."""
+    service = AnalysisService(
+        Settings(sandbox_execution_enabled=True, sandbox_executor="inprocess")
+    )
+    result = service.auto_exploit(fmt_sys_bin.read_bytes(), pattern_length=200)
+    assert result["confirmation"].get("confirmed") is not True
+    v = result["verification"]
+    assert v["technique"] == "fmt-leak-pie"
+    assert v["chain"] == "ret2system"
+    assert v["succeeded"] is True
