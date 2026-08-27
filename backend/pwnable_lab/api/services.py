@@ -70,6 +70,8 @@ from pwnable_lab.sandbox import (
     auto_ret2libc_in_container,
     auto_ret2system32_core,
     auto_ret2system32_in_container,
+    auto_ret2system32_pie_core,
+    auto_ret2system32_pie_in_container,
     auto_ret2system_core,
     auto_ret2system_in_container,
     auto_ret2system_pie_core,
@@ -516,6 +518,32 @@ class AnalysisService:
             except OSError:
                 pass
 
+    def _auto_ret2system32_pie(self, data: bytes, offset: int) -> dict:
+        """i386 PIE 자동 ret2system 을 executor 별로 위임한다(base 관측→rebase→셸 증명).
+
+        ``_auto_ret2system_pie``(amd64)와 동일 구조: container 는 컨테이너 안의 CLI
+        ``--auto-ret2system32-pie`` 로, inprocess 는 temp 파일에 코어를 직접 돌린다.
+        """
+
+        if self.settings.sandbox_executor == "container":
+            return auto_ret2system32_pie_in_container(
+                data, offset=offset, settings=self.settings
+            )
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_ret2system32_pie_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
     def _auto_execve(self, data: bytes, offset: int) -> dict:
         """완전 자동 execve syscall ROP 를 executor 별로 위임한다(셸 획득까지 증명).
 
@@ -545,9 +573,14 @@ class AnalysisService:
 
         비 PIE 경로(``_auto_verify``)와 같은 순서로 ret2win → ret2system → execve 를
         시도하되, 모든 절대주소를 관측 base 로 rebase 한다(win 함수가 없어도
-        ret2system/execve 로 셸 증명 가능). amd64 전용.
+        ret2system/execve 로 셸 증명 가능). i386 PIE 는 cdecl ret2system 으로 분기.
         """
 
+        # i386(32-bit) PIE: cdecl ret2system(스택 인자, pop 가젯 불필요)을 rebase.
+        if bits == 32:
+            if ret2system_plan32(image) is not None:
+                return self._auto_ret2system32_pie(data, offset)
+            return {"attempted": False, "reason": "pie-no-technique"}
         if bits != 64:
             return {"attempted": False, "reason": "pie-amd64-only"}
         attempts: list[dict] = []

@@ -38,6 +38,7 @@ from pwnable_lab.sandbox import (
     auto_fmt_leak_pie_core,
     auto_ret2libc_core,
     auto_ret2system32_core,
+    auto_ret2system32_pie_core,
     auto_ret2system_core,
     auto_ret2system_pie_core,
     auto_ret2win_pie_core,
@@ -93,6 +94,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="auto_ret2system32",
         help="i386 자동 ret2system(cdecl 스택 인자→system→셸). --offset 필요.",
+    )
+    parser.add_argument(
+        "--auto-ret2system32-pie",
+        action="store_true",
+        dest="auto_ret2system32_pie",
+        help="i386 PIE 자동 ret2system(base 관측→rebase→셸 증명). --offset 필요.",
     )
     parser.add_argument(
         "--auto-fmt-leak-pie",
@@ -239,6 +246,20 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             output = auto_ret2system32_core(
+                binary_path, offset=args.offset, limits=limits
+            )
+        elif args.auto_ret2system32_pie:
+            if args.offset is None:
+                print(
+                    "[sandbox-cli] --auto-ret2system32-pie 는 --offset 이 필요합니다.",
+                    file=sys.stderr,
+                )
+                return 3
+            print(
+                f"[sandbox-cli] auto_ret2system32_pie 실행 (offset={args.offset})",
+                file=sys.stderr,
+            )
+            output = auto_ret2system32_pie_core(
                 binary_path, offset=args.offset, limits=limits
             )
         elif args.auto_fmt_leak_pie:
