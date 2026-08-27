@@ -344,6 +344,22 @@ def binary_function_pseudocode(
     return service.pseudo_c(repo.load_bytes(sha256), address=_parse_address(address))
 
 
+@router.post("/{sha256}/decompile-ghidra")
+async def binary_decompile_ghidra(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """Ghidra headless 로 바이너리 전체를 디컴파일한다(진짜 디컴파일러).
+
+    기본 비활성(``PLAB_GHIDRA_ENABLED``) — 그 경우 ``{"available": false}`` 를 반환해
+    UI 가 규칙 기반 pseudo-C 로 폴백하게 한다. Ghidra 는 정적 분석만(실행 안 함),
+    무거우므로 threadpool 에서 실행한다.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.decompile_ghidra, data)
+
+
 @router.get("/{sha256}/gadgets")
 def binary_gadgets(
     sha256: str,
