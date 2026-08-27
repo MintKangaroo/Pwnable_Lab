@@ -915,6 +915,9 @@ class AnalysisService:
             "succeeded": True,
             "program": decompiled.get("program"),
             "language": decompiled.get("language"),
+            "function_count": decompiled.get("function_count"),
+            # 디컴파일 C 를 그대로 전달(같은 실행 결과 재사용 — Ghidra 재실행 없음).
+            "functions": decompiled.get("functions", []),
             "overflow_insights": insight_dicts,
             "best_overflow_offset": best_offset,
             "vulnerabilities": findings,

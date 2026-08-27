@@ -4606,6 +4606,73 @@ select {
   font-size: 12px;
 }
 
+/* --- Ghidra analysis view --- */
+.ghidra-insight {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border, #1e293b);
+}
+.ghidra-insight:last-child {
+  border-bottom: none;
+}
+.ghidra-insight-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ghidra-insight-head code {
+  font-size: 12px;
+}
+.ghidra-offset {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--accent, #38bdf8);
+  font-size: 12px;
+}
+.ghidra-evidence {
+  margin: 4px 0 0;
+  color: var(--muted, #94a3b8);
+  font-size: 12px;
+}
+.ghidra-fn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ghidra-fn {
+  border: 1px solid var(--border, #1e293b);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ghidra-fn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.ghidra-fn-head:hover {
+  background: var(--surface-2, #0f172a);
+}
+.ghidra-fn-caret {
+  color: var(--muted, #94a3b8);
+  width: 12px;
+}
+.ghidra-fn-entry {
+  margin-left: auto;
+  color: var(--muted, #94a3b8);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ghidra-fn-body {
+  padding: 0 10px 10px;
+}
+
 /* --- Exploit Runner: shell session proof --- */
 .shell-session {
   margin-top: 10px;
