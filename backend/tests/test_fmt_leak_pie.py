@@ -137,3 +137,19 @@ def test_auto_fmt_leak_pie_via_service(fmt_bin):
     assert result["technique"] == "fmt-leak-pie"
     assert result["succeeded"] is True
     assert result["shell_proven"] is True
+
+
+def test_auto_exploit_falls_back_to_fmt_leak(fmt_bin):
+    """2단계 fmt 바이너리는 단일 cyclic 확정이 실패하므로 auto_exploit 이 fmt-leak
+    로 폴백해야 한다."""
+    service = AnalysisService(
+        Settings(sandbox_execution_enabled=True, sandbox_executor="inprocess")
+    )
+    result = service.auto_exploit(fmt_bin.read_bytes(), pattern_length=200)
+    # 단일단계 오프셋 확정은 크래시가 없어 실패.
+    assert result["confirmation"].get("confirmed") is not True
+    # 폴백 fmt-leak 가 셸을 증명.
+    v = result["verification"]
+    assert v["technique"] == "fmt-leak-pie"
+    assert v["succeeded"] is True
+    assert v["aslr"] == "defeated-via-inband-leak"
