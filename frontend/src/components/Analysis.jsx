@@ -32,6 +32,7 @@ const tabsForFormat = (format) => {
       ['got', 'GOT / PLT'],
       ['strategy', 'Exploit Strategy'],
       ['exploit-runner', 'Exploit Runner'],
+      ['ghidra', 'Ghidra'],
       COMMON_TABS[4],
     ];
   }
@@ -2294,6 +2295,193 @@ function ExploitRunner({ sha }) {
   );
 }
 
+function GhidraView({ sha }) {
+  const [state, run] = useSandboxAction(() => api.analyzeGhidra(sha));
+  const [openFn, setOpenFn] = useState(null);
+  const r = state.result;
+  const unavailable = r && r.available === false;
+
+  return (
+    <div className="strategy-workspace ghidra-workspace">
+      <section className="strategy-intro">
+        <div className="section-heading">
+          <h3>Ghidra 분석 (진짜 디컴파일러)</h3>
+          <span className="verification verification-inferred">
+            정적 분석 · 실행 안 함 · 기본 비활성
+          </span>
+        </div>
+        <p className="strategy-disclaimer">
+          Ghidra headless 로 <strong>실제 디컴파일</strong>하고, 복원한 버퍼 크기·스택
+          프레임을 vuln_scan/strategy 에 피드백합니다. 정적 disasm 휴리스틱이 놓치는
+          오버플로를 <strong>확정</strong>하고 정확한 오프셋을 계산합니다(실행이 아니라
+          정적 추정 — <code>static-ghidra</code>). 서버에서 <code>PLAB_GHIDRA_ENABLED=1</code>
+          로 켠 경우에만 동작합니다.
+        </p>
+        <div className="runner-actions">
+          <button
+            className="button primary"
+            disabled={state.status === 'running'}
+            onClick={() => run()}
+          >
+            Ghidra 분석 실행
+          </button>
+          <span className="runner-hint">디컴파일+분석은 수십 초 걸릴 수 있습니다.</span>
+        </div>
+      </section>
+
+      {state.status === 'running' && <Loading label="Ghidra 디컴파일·분석 중" />}
+      {state.status === 'error' && (
+        <div className="runner-error">
+          <strong>⚠ 실행 불가</strong>
+          <p>{state.error}</p>
+        </div>
+      )}
+
+      {unavailable && (
+        <section className="runner-card">
+          <p className="strategy-disclaimer">
+            Ghidra 백엔드가 비활성이거나 설치되지 않았습니다
+            {r.reason ? ` (${r.reason})` : ''}. 규칙 기반 pseudo-C(Functions 탭)로
+            폴백하세요.
+          </p>
+        </section>
+      )}
+
+      {r && r.available && (
+        <>
+          <section className="runner-card runner-headline">
+            <div className="section-heading">
+              <h3>분석 요약</h3>
+              <span>
+                {r.program} · {r.language} · {r.function_count} functions
+              </span>
+            </div>
+            <div className="runner-kv">
+              <span>확정 오버플로 오프셋</span>
+              <strong>
+                {r.best_overflow_offset != null ? (
+                  <Badge tone="green">{r.best_overflow_offset}</Badge>
+                ) : (
+                  <Badge tone="neutral">없음</Badge>
+                )}
+              </strong>
+            </div>
+            {r.strategy?.confirmed_offset != null && (
+              <p className="runner-hint">
+                strategy 에 오프셋 {r.strategy.confirmed_offset} 주입 (source={' '}
+                <code>{r.strategy.offset_source}</code>, verification={' '}
+                <code>{r.strategy.offset_verification}</code> — 정적 추정, 실행 아님).
+              </p>
+            )}
+          </section>
+
+          <GhidraOverflows insights={r.overflow_insights || []} />
+          <GhidraConfirmedVulns vulns={r.vulnerabilities || []} />
+          <GhidraFunctions
+            functions={r.functions || []}
+            openFn={openFn}
+            setOpenFn={setOpenFn}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function GhidraOverflows({ insights }) {
+  const confirmed = insights.filter((i) => i.confirmed);
+  if (!insights.length) return null;
+  return (
+    <section className="runner-card">
+      <div className="section-heading">
+        <h3>스택 오버플로 (Ghidra 확정)</h3>
+        <span>버퍼 크기·스택 프레임 기반 · 오프셋 = ret_off − buffer_off</span>
+      </div>
+      {confirmed.length === 0 && <Empty label="확정된 오버플로 없음" />}
+      {insights.map((i, idx) => (
+        <div className="ghidra-insight" key={idx}>
+          <div className="ghidra-insight-head">
+            <Badge tone={i.confirmed ? 'danger' : 'neutral'}>
+              {i.confirmed ? '확정' : '가능'}
+            </Badge>
+            <code>
+              {i.function}() · {i.sink}() → {i.buffer_name}[
+              {i.buffer_size ?? '?'}]
+            </code>
+            {i.confirmed && (
+              <span className="ghidra-offset">offset = {i.offset}</span>
+            )}
+          </div>
+          <p className="ghidra-evidence">{i.evidence}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function GhidraConfirmedVulns({ vulns }) {
+  const promoted = vulns.filter((v) => v.ghidra_confirmed);
+  if (promoted.length === 0) return null;
+  return (
+    <section className="runner-card">
+      <div className="section-heading">
+        <h3>Ghidra 로 승격된 취약점</h3>
+        <span>정적 스캔 후보 → Ghidra 로 확정</span>
+      </div>
+      {promoted.map((v, idx) => (
+        <div className="runner-kv" key={idx}>
+          <span>
+            <Badge tone={severityTone[v.severity] || 'neutral'}>{v.symbol}</Badge>{' '}
+            {v.category}
+          </span>
+          <strong>
+            <Badge tone="danger">confirmed</Badge> offset {v.ghidra_offset}
+          </strong>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function GhidraFunctions({ functions, openFn, setOpenFn }) {
+  const withC = functions.filter((f) => f.c);
+  if (withC.length === 0) return null;
+  return (
+    <section className="runner-card">
+      <div className="section-heading">
+        <h3>디컴파일 ({withC.length})</h3>
+        <span>함수를 눌러 C 를 펼칩니다</span>
+      </div>
+      <div className="ghidra-fn-list">
+        {withC.map((f) => (
+          <div className="ghidra-fn" key={f.entry}>
+            <button
+              className="ghidra-fn-head"
+              onClick={() => setOpenFn(openFn === f.entry ? null : f.entry)}
+            >
+              <span className="ghidra-fn-caret">
+                {openFn === f.entry ? '▾' : '▸'}
+              </span>
+              <code>{f.signature || f.name}</code>
+              <span className="ghidra-fn-entry">{f.entry}</span>
+            </button>
+            {openFn === f.entry && (
+              <div className="ghidra-fn-body">
+                <div className="pseudo-c-toolbar">
+                  <CopyButton value={f.c} />
+                </div>
+                <pre className="pseudo-c-code">
+                  <code>{f.c}</code>
+                </pre>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 /**
  * @param {{
  *   sha: string,
@@ -2450,6 +2638,7 @@ export function Analysis({
           {tab === 'gadgets' && <Gadgets sha={sha} onAddressChange={onAddressChange} />}
           {tab === 'strategy' && <Strategy sha={sha} />}
           {tab === 'exploit-runner' && <ExploitRunner sha={sha} />}
+          {tab === 'ghidra' && <GhidraView sha={sha} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}
           {tab === 'got' && <GotPlt sha={sha} />}

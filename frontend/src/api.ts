@@ -339,6 +339,11 @@ export const api = {
   pseudocode: (sha: string, address: number | string) =>
     request<PseudoCodeResult>(`/binaries/${sha}/functions/${address}/pseudocode`),
   strategy: (sha: string) => request<StrategyResult>(`/binaries/${sha}/strategy`),
+  // Ghidra 디컴파일 백엔드 — 기본 비활성(available:false 폴백). 정적 분석만(실행 안 함).
+  decompileGhidra: (sha: string) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/decompile-ghidra`),
+  analyzeGhidra: (sha: string) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/analyze-ghidra`),
   // Phase 6 dynamic sandbox — 기본 비활성(서버가 켜지 않으면 503 SandboxError).
   confirmOffset: (sha: string, patternLength?: number) =>
     postQuery<Record<string, unknown>>(`/binaries/${sha}/confirm-offset`, {
