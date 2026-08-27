@@ -51,6 +51,8 @@ from pwnable_lab.sandbox import (
     SandboxLimits,
     auto_execve_core,
     auto_execve_in_container,
+    auto_execve_pie_core,
+    auto_execve_pie_in_container,
     auto_ret2libc_core,
     auto_ret2libc_in_container,
     auto_ret2system_core,
@@ -474,9 +476,9 @@ class AnalysisService:
     def _auto_verify_pie(self, data: bytes, offset: int, image, bits: int) -> dict:
         """PIE 자동 익스: 로드 base 를 로컬 관측(ASLR-off)해 rebase 후 기법 시도.
 
-        비 PIE 경로(``_auto_verify``)와 같은 순서로 ret2win → ret2system 을 시도하되,
-        모든 절대주소를 관측 base 로 rebase 한다(win 함수가 없어도 ret2system 으로
-        셸 증명 가능). amd64 전용.
+        비 PIE 경로(``_auto_verify``)와 같은 순서로 ret2win → ret2system → execve 를
+        시도하되, 모든 절대주소를 관측 base 로 rebase 한다(win 함수가 없어도
+        ret2system/execve 로 셸 증명 가능). amd64 전용.
         """
 
         if bits != 64:
@@ -490,6 +492,12 @@ class AnalysisService:
 
         if ret2system_plan(image) is not None:
             attempts.append(self._auto_ret2system_pie(data, offset))
+            if attempts[-1].get("succeeded"):
+                return self._with_attempts(attempts[-1], attempts)
+
+        # system 이 없는 PIE(주로 정적 링크)는 execve syscall ROP 로 시도한다.
+        if execve_plan(image) is not None:
+            attempts.append(self._auto_execve_pie(data, offset))
             if attempts[-1].get("succeeded"):
                 return self._with_attempts(attempts[-1], attempts)
 
@@ -544,6 +552,32 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_ret2system_pie_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _auto_execve_pie(self, data: bytes, offset: int) -> dict:
+        """PIE 자동 execve syscall ROP 를 executor 별로 위임한다(base 관측→rebase→셸 증명).
+
+        ``system`` 이 없는 PIE 를 위한 경로. ``_auto_ret2system_pie`` 와 동일 구조로
+        container 는 CLI ``--auto-execve-pie`` 로, inprocess 는 코어를 직접 돌린다.
+        """
+
+        if self.settings.sandbox_executor == "container":
+            return auto_execve_pie_in_container(
+                data, offset=offset, settings=self.settings
+            )
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_execve_pie_core(path, offset=offset, limits=limits)
         finally:
             try:
                 os.unlink(path)

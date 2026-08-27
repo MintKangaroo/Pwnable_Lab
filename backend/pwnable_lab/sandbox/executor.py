@@ -182,6 +182,20 @@ def auto_execve_in_container(
     )
 
 
+def auto_execve_pie_in_container(
+    data: bytes, *, offset: int, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 PIE 자동 execve syscall ROP(base 관측→rebase→셸 증명)를 수행한다.
+
+    로드 base 관측·ASLR-off 검증이 실행 프로세스 안에서 일어나야 하므로 CLI
+    ``--auto-execve-pie`` 로 위임한다.
+    """
+
+    return _run_container(
+        settings, ["--stdin", "--auto-execve-pie", "--offset", str(offset)], data
+    )
+
+
 def auto_ret2win_pie_in_container(
     data: bytes, *, offset: int, settings: _ExecutorSettings
 ) -> dict:
