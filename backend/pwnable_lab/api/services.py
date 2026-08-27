@@ -363,7 +363,11 @@ class AnalysisService:
             if (
                 is_pie(image)
                 and (image.bits or 64) == 64
-                and ret2win_target(image) is not None
+                and (
+                    ret2win_target(image) is not None
+                    or ret2system_plan(image) is not None
+                    or execve_plan(image) is not None
+                )
             ):
                 fmt = self.auto_fmt_leak_pie(data)
                 if fmt.get("succeeded"):
