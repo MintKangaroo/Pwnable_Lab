@@ -360,6 +360,22 @@ async def binary_decompile_ghidra(
     return await run_in_threadpool(service.decompile_ghidra, data)
 
 
+@router.post("/{sha256}/analyze-ghidra")
+async def binary_analyze_ghidra(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """Ghidra 디컴파일을 vuln_scan/strategy 에 피드백한 통합 분석.
+
+    복원한 버퍼 크기·스택 레이아웃으로 확정 오버플로·정확한 오프셋을 도출해 정적
+    findings 를 승격하고 strategy 스켈레톤에 오프셋을 주입한다. 비활성/미설치면
+    ``{"available": false}`` 로 폴백 신호. Ghidra 는 정적 분석만(실행 안 함).
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.analyze_ghidra, data)
+
+
 @router.get("/{sha256}/gadgets")
 def binary_gadgets(
     sha256: str,
