@@ -202,6 +202,20 @@ def auto_ret2system32_in_container(
     )
 
 
+def auto_ret2system32_pie_in_container(
+    data: bytes, *, offset: int, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 i386 PIE 자동 ret2system(base 관측→rebase→셸 증명)을 수행한다.
+
+    로드 base 관측·ASLR-off 검증이 실행 프로세스 안에서 일어나야 하므로 CLI
+    ``--auto-ret2system32-pie`` 로 위임한다(amd64 PIE 위임과 동일 구조).
+    """
+
+    return _run_container(
+        settings, ["--stdin", "--auto-ret2system32-pie", "--offset", str(offset)], data
+    )
+
+
 def auto_execve_pie_in_container(
     data: bytes, *, offset: int, settings: _ExecutorSettings
 ) -> dict:
