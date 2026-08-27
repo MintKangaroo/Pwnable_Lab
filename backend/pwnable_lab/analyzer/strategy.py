@@ -1133,15 +1133,23 @@ def inject_confirmed_offset(
     *,
     method: str | None = None,
     source: str = "dynamic-sandbox",
+    verification: str = "verified",
 ) -> dict:
-    """정적 전략의 pwntools 스켈레톤에 동적으로 확정된 오프셋을 주입한다.
+    """정적 전략의 pwntools 스켈레톤에 확정된 오프셋을 주입한다.
 
     각 경로의 ``offset = ...`` 라인(스택 오버플로 오프셋)을 확정값으로 교체하고,
     상위 메타데이터에 확정 사실을 기록한다. 포맷스트링 경로의 ``fmt_offset`` 은
     다른 개념이라 건드리지 않는다. 원본 dict 는 변형하지 않고 새 dict 를 반환한다.
+
+    ``verification`` 은 확정의 성격을 **정직하게** 라벨링한다: 기본 ``"verified"`` 는
+    동적 샌드박스가 실제 실행으로 확정한 경우(cyclic_find), ``"static-ghidra"`` 는
+    Ghidra 가 복원한 버퍼 크기·스택 프레임에서 정적 추정한 경우(실행 아님)다.
     """
 
-    note = f"offset = {offset}  # verified: 동적 샌드박스 확정 (cyclic_find)"
+    if verification == "static-ghidra":
+        note = f"offset = {offset}  # static: Ghidra 스택 프레임 추정(실행 아님 — cyclic 로 검증 권장)"
+    else:
+        note = f"offset = {offset}  # verified: 동적 샌드박스 확정 (cyclic_find)"
     if method:
         note += f" [method={method}]"
 
@@ -1159,7 +1167,7 @@ def inject_confirmed_offset(
 
     updated["paths"] = new_paths
     updated["confirmed_offset"] = offset
-    updated["offset_verification"] = "verified"
+    updated["offset_verification"] = verification
     updated["offset_source"] = source
     updated["offset_injected_paths"] = injected_ids
     return updated

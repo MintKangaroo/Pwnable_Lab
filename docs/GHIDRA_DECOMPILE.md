@@ -59,6 +59,34 @@ export PLAB_GHIDRA_ENABLED=1
 # export PLAB_JAVA_HOME=~/.local/jdk/jdk-21.0.12.1+1
 ```
 
+## vuln_scan / strategy 피드백 (`analyze-ghidra`)
+
+```
+POST /api/binaries/{sha256}/analyze-ghidra
+```
+
+디컴파일을 **한 번** 돌려 두 곳에 피드백한다:
+
+- **vuln_scan 피드백**: Ghidra 가 복원한 **버퍼 크기 + 스택 프레임 레이아웃**으로 확정
+  스택 오버플로를 도출한다(`analyzer/ghidra_insights.py::overflow_insights`). 정적
+  disasm 휴리스틱은 `[rbp-N]` 변위에 의존해 -O2/스트립에서 오프셋을 놓치고 오버플로를
+  `possible` 로만 표기하지만, Ghidra 는:
+  - `gets`/`scanf %s`/`strcpy` 같은 **무한 sink** 가 스택 버퍼에 쓰면 → 확정.
+  - `read`/`fgets` 의 **write 크기 > 버퍼 크기** 면 → 확정(이내면 안전으로 배제).
+  - 정적 finding 을 `ghidra_confirmed`/`ghidra_offset`/`status="confirmed"` 로 승격.
+- **strategy 피드백**: 확정 오버플로 오프셋 `= return_addr_offset - buffer_stack_offset`
+  을 pwntools 스켈레톤에 주입한다(`inject_confirmed_offset(..., verification="static-ghidra")`).
+
+> **버퍼 크기는 C 선언에서**: 스트립 바이너리는 Ghidra 스택 변수 `getLength()` 가
+> `1`(undefined1)로 뭉개지므로, 진짜 배열 크기는 디컴파일 C 선언(`undefined1 buf [64]`)
+> 에서 뽑는다. 스택 변수는 **오프셋**용, C 선언은 **크기**용.
+
+> **정직성**: 오프셋은 Ghidra 스택 프레임 **정적 추정**이라 `offset_verification=
+> "static-ghidra"`(동적 샌드박스의 `verified` 와 구분)로 라벨링한다. 실측 대조:
+> `char buf[64]` → 72, 2-버퍼(`small[64]` 밑에 `big[128]`) → 200 이 **동적 확정값과
+> 정확히 일치**함을 확인했다(`test_ghidra_insights.py`, `test_i386`/`test_fmt_leak` 의
+> 동적값과 교차 검증).
+
 ## 구현
 
 - `analyzer/ghidra.py`: `locate_ghidra`(경로 자동 탐지) / `ghidra_available` /
@@ -68,4 +96,11 @@ export PLAB_GHIDRA_ENABLED=1
   C 를 뽑아 JSON 으로 쓴다. `DecompileOptions`+`setSimplificationStyle("decompile")` 설정
   필수(없으면 C 가 비어 나온다).
 - 서비스 `AnalysisService.decompile_ghidra` / 라우트 `POST /binaries/{sha}/decompile-ghidra`.
-- 테스트 `backend/tests/test_ghidra.py`(설치+컴파일러 있을 때만 실 디컴파일, 없으면 skip).
+- `analyzer/ghidra_insights.py`: `overflow_insights`(확정 오버플로+오프셋)/`best_overflow_offset`/
+  `ghidra_offset_for_function`. Ghidra 실행과 분리된 순수 파싱이라 합성 입력으로 단위 테스트.
+  스택 변수 덤프는 `DecompileToJson.java` 가 `getStackFrame().getStackVariables()` +
+  `getReturnAddressOffset()` 로 함께 내보낸다.
+- 서비스 `analyze_ghidra`(디컴파일 1회→vuln_scan+strategy 피드백) / 라우트
+  `POST /binaries/{sha}/analyze-ghidra`.
+- 테스트 `backend/tests/test_ghidra.py`·`test_ghidra_insights.py`(핵심 로직은 합성 입력으로
+  항상, 실 디컴파일 대조는 설치+컴파일러 있을 때만).

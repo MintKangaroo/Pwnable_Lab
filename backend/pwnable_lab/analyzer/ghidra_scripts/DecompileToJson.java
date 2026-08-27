@@ -6,6 +6,8 @@ import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompileOptions;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.StackFrame;
+import ghidra.program.model.listing.Variable;
 import ghidra.util.task.ConsoleTaskMonitor;
 import java.io.FileWriter;
 import java.util.ArrayList;
@@ -61,11 +63,38 @@ public class DecompileToJson extends GhidraScript {
                 else if (r != null)
                     println("decompile fail " + f.getName() + ": " + r.getErrorMessage());
             } catch (Exception e) { println("decompile exc " + f.getName() + ": " + e); }
+            // 스택 프레임 레이아웃: 각 지역/파라미터의 프레임 오프셋과 크기.
+            // 오버플로 버퍼에서 저장된 반환 주소까지의 거리(= payload 오프셋) 계산에 쓴다.
+            StringBuilder vars = new StringBuilder("[");
+            int retOff = 0;
+            boolean haveRet = false;
+            try {
+                StackFrame frame = f.getStackFrame();
+                if (frame != null) {
+                    retOff = frame.getReturnAddressOffset();
+                    haveRet = true;
+                    boolean first = true;
+                    for (Variable v : frame.getStackVariables()) {
+                        if (!first) vars.append(",");
+                        first = false;
+                        int len = v.getLength();
+                        String dt = v.getDataType() != null ? v.getDataType().getName() : null;
+                        vars.append("{\"name\":").append(q(v.getName()));
+                        vars.append(",\"offset\":").append(v.getStackOffset());
+                        vars.append(",\"size\":").append(len);
+                        vars.append(",\"type\":").append(q(dt)).append("}");
+                    }
+                }
+            } catch (Exception e) { /* 프레임 없음/스트립 등 */ }
+            vars.append("]");
+
             StringBuilder rec = new StringBuilder();
             rec.append("{\"name\":").append(q(f.getName()));
             rec.append(",\"entry\":\"0x").append(Long.toHexString(f.getEntryPoint().getOffset())).append("\"");
             rec.append(",\"signature\":").append(q(f.getPrototypeString(false, false)));
-            rec.append(",\"c\":").append(q(c)).append("}");
+            rec.append(",\"c\":").append(q(c));
+            if (haveRet) rec.append(",\"return_addr_offset\":").append(retOff);
+            rec.append(",\"stack_vars\":").append(vars.toString()).append("}");
             recs.add(rec.toString());
             count++;
         }

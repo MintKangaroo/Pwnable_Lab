@@ -27,6 +27,11 @@ from pwnable_lab.analyzer.ghidra import (
     decompile_with_ghidra,
     ghidra_available,
 )
+from pwnable_lab.analyzer.ghidra_insights import (
+    OverflowInsight,
+    best_overflow_offset,
+    overflow_insights,
+)
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
@@ -846,6 +851,75 @@ class AnalysisService:
         result["available"] = True
         result["succeeded"] = True
         return result
+
+    def analyze_ghidra(self, data: bytes) -> dict:
+        """Ghidra 디컴파일을 vuln_scan/strategy 에 피드백한 통합 분석.
+
+        비싼 디컴파일을 **한 번** 돌려 두 곳에 먹인다:
+
+        * **vuln_scan 피드백**: Ghidra 가 복원한 버퍼 크기·스택 레이아웃으로 확정
+          스택 오버플로를 도출(``overflow_insights``)하고, 정적 findings 중 같은
+          함수의 오버플로 sink 를 ``ghidra_confirmed``/``ghidra_offset`` 으로 승격.
+        * **strategy 피드백**: 확정 오버플로 오프셋을 :func:`inject_confirmed_offset`
+          로 정적 strategy 스켈레톤에 주입(정적 휴리스틱이 -O2/스트립에서 실패해도
+          진짜 버퍼 크기 기반 오프셋을 채운다).
+
+        비활성/미설치/실패 시 ``{"available": False, ...}`` 로 폴백 신호를 준다.
+        """
+
+        self._require_format(data, ArtifactFormat.ELF, feature="Ghidra analysis")
+        decompiled = self.decompile_ghidra(data)
+        if not decompiled.get("available") or not decompiled.get("succeeded", True):
+            return decompiled  # available:False 또는 succeeded:False 그대로 폴백
+
+        insights = overflow_insights(decompiled)
+        insight_dicts = [asdict(i) for i in insights]
+        best_offset = best_overflow_offset(insights)
+
+        image = parse_elf(data)
+        # vuln_scan 피드백: 정적 finding 을 Ghidra 확정으로 승격.
+        confirmed_by_func: dict[str, OverflowInsight] = {}
+        for ins in insights:
+            if ins.confirmed and (
+                ins.function not in confirmed_by_func
+                or ins.offset > confirmed_by_func[ins.function].offset
+            ):
+                confirmed_by_func[ins.function] = ins
+        findings = [asdict(f) for f in scan_vulns(image)]
+        for finding in findings:
+            hit = None
+            for call in finding.get("call_sites", []):
+                fn = call.get("function")
+                if fn and fn in confirmed_by_func:
+                    hit = confirmed_by_func[fn]
+                    break
+            if hit is not None:
+                finding["ghidra_confirmed"] = True
+                finding["ghidra_offset"] = hit.offset
+                finding["status"] = "confirmed"
+                finding.setdefault("evidence", []).append("Ghidra: " + hit.evidence)
+
+        # strategy 피드백: 확정 오프셋 주입.
+        strategy = analyze_strategy(image)
+        if best_offset is not None:
+            strategy = inject_confirmed_offset(
+                strategy,
+                best_offset,
+                method="ghidra-stack-frame",
+                source="ghidra-static",
+                verification="static-ghidra",
+            )
+
+        return {
+            "available": True,
+            "succeeded": True,
+            "program": decompiled.get("program"),
+            "language": decompiled.get("language"),
+            "overflow_insights": insight_dicts,
+            "best_overflow_offset": best_offset,
+            "vulnerabilities": findings,
+            "strategy": strategy,
+        }
 
     def pseudo_c(self, data: bytes, *, address: int) -> dict:
         """단일 함수의 규칙 기반 pseudo-C 초안."""
