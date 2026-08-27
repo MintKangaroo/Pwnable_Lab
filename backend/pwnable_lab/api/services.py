@@ -31,6 +31,7 @@ from pwnable_lab.analyzer.strategy import (
     is_pie,
     leak_plan,
     ret2system_plan,
+    ret2system_plan32,
     ret2win_target,
 )
 from pwnable_lab.analyzer.strings import extract_strings
@@ -55,6 +56,8 @@ from pwnable_lab.sandbox import (
     auto_execve_pie_in_container,
     auto_ret2libc_core,
     auto_ret2libc_in_container,
+    auto_ret2system32_core,
+    auto_ret2system32_in_container,
     auto_ret2system_core,
     auto_ret2system_in_container,
     auto_ret2system_pie_core,
@@ -375,6 +378,12 @@ class AnalysisService:
             if attempts[-1]["succeeded"]:
                 return self._with_attempts(attempts[-1], attempts)
 
+        # i386(32-bit): cdecl ret2system(스택 인자, pop 가젯 불필요).
+        if ret2system_plan32(image) is not None:
+            attempts.append(self._auto_ret2system32(data, offset))
+            if attempts[-1]["succeeded"]:
+                return self._with_attempts(attempts[-1], attempts)
+
         if attempts:
             return self._with_attempts(attempts[0], attempts)
         return {"attempted": False, "reason": "no-technique"}
@@ -443,6 +452,32 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_ret2system_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _auto_ret2system32(self, data: bytes, offset: int) -> dict:
+        """완전 자동 i386 ret2system 을 executor 별로 위임한다(셸 획득까지 증명).
+
+        ``_auto_ret2system`` 과 동일 구조: container 는 컨테이너 안의 CLI
+        ``--auto-ret2system32`` 로, inprocess 는 temp 파일에 코어를 직접 돌린다.
+        """
+
+        if self.settings.sandbox_executor == "container":
+            return auto_ret2system32_in_container(
+                data, offset=offset, settings=self.settings
+            )
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_ret2system32_core(path, offset=offset, limits=limits)
         finally:
             try:
                 os.unlink(path)
