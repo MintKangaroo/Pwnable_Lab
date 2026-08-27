@@ -353,6 +353,22 @@ class AnalysisService:
                 strategy, offset, method=confirmation.get("method")
             )
             verification = self._auto_verify(data, offset)
+
+        # 폴백: 위가 실패한 PIE amd64 는 포맷스트링 in-band leak 를 시도한다. 2단계
+        # (leak→overflow) 바이너리는 단일 cyclic 이 크래시를 못 내 오프셋 확정이 실패
+        # 하므로 여기서 걸린다. fmt-leak 는 오프셋을 자체 확정하고 base 를 유출로 복원해
+        # ASLR 이 켜져 있어도 성립한다.
+        if not verification.get("succeeded"):
+            image = parse_elf(data)
+            if (
+                is_pie(image)
+                and (image.bits or 64) == 64
+                and ret2win_target(image) is not None
+            ):
+                fmt = self.auto_fmt_leak_pie(data)
+                if fmt.get("succeeded"):
+                    verification = fmt
+
         return {
             "strategy": strategy,
             "confirmation": confirmation,
