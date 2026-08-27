@@ -267,6 +267,22 @@ async def binary_auto_ret2libc(
     return await run_in_threadpool(service.auto_ret2libc, data, offset=offset)
 
 
+@router.post("/{sha256}/auto-fmt-leak")
+async def binary_auto_fmt_leak(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """PIE 포맷스트링 in-band leak 자동 익스: base 유출 → rebase ret2win → 셸 증명.
+
+    오버플로 오프셋·leak 인자 위치를 자체 확정하므로 offset 인자가 필요 없다. base 를
+    유출값에서 계산하므로 ASLR 이 켜져 있어도 성립하는 진짜 leak(amd64 PIE, in-process).
+    기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.auto_fmt_leak_pie, data)
+
+
 @router.post("/{sha256}/leak")
 async def binary_leak(
     sha256: str,

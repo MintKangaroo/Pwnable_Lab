@@ -35,6 +35,7 @@ from pwnable_lab.sandbox import (
     SandboxLimits,
     auto_execve_core,
     auto_execve_pie_core,
+    auto_fmt_leak_pie_core,
     auto_ret2libc_core,
     auto_ret2system32_core,
     auto_ret2system_core,
@@ -92,6 +93,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="auto_ret2system32",
         help="i386 자동 ret2system(cdecl 스택 인자→system→셸). --offset 필요.",
+    )
+    parser.add_argument(
+        "--auto-fmt-leak-pie",
+        action="store_true",
+        dest="auto_fmt_leak_pie",
+        help="PIE 포맷스트링 in-band leak(오프셋 자체 확정→base 유출→셸). --offset 불필요.",
     )
     parser.add_argument(
         "--auto-execve-pie",
@@ -234,6 +241,10 @@ def main(argv: list[str] | None = None) -> int:
             output = auto_ret2system32_core(
                 binary_path, offset=args.offset, limits=limits
             )
+        elif args.auto_fmt_leak_pie:
+            # 오프셋을 자체 확정하므로 --offset 불필요.
+            print("[sandbox-cli] auto_fmt_leak_pie 실행", file=sys.stderr)
+            output = auto_fmt_leak_pie_core(binary_path, limits=limits)
         elif args.auto_execve_pie:
             if args.offset is None:
                 print(
