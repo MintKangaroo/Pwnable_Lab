@@ -15,6 +15,7 @@
 
 from pwnable_lab.sandbox.executor import (
     auto_execve_in_container,
+    auto_execve_pie_in_container,
     auto_ret2libc_in_container,
     auto_ret2system_in_container,
     auto_ret2system_pie_in_container,
@@ -30,6 +31,7 @@ from pwnable_lab.sandbox.gate import (
     require_sandbox_boundary,
     require_sandbox_enabled,
 )
+from pwnable_lab.sandbox.pie import auto_execve_pie as auto_execve_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2system_pie as auto_ret2system_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2win_pie as auto_ret2win_pie_core
 from pwnable_lab.sandbox.ret2libc import auto_ret2libc as auto_ret2libc_core
@@ -59,6 +61,8 @@ __all__ = [
     "ShellProof",
     "auto_execve_core",
     "auto_execve_in_container",
+    "auto_execve_pie_core",
+    "auto_execve_pie_in_container",
     "auto_ret2libc_core",
     "auto_ret2libc_in_container",
     "auto_ret2system_core",
