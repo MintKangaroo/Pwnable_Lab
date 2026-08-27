@@ -188,14 +188,25 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   `cyclic_find` 로 반환 오프셋을 `verified` 로 확정 (정적 추정이 실패하는 gcc
   간접 버퍼 관용구도 커버)
 - **auto-exploit**: 정적 전략 + 동적 확정 오프셋을 pwntools 스켈레톤에 주입하고,
-  ret2win(정렬 재시도) → ret2system(pop rdi→/bin/sh→system 자동 구성)을 순서대로
-  **무입력 자동 검증**
-- **PIE 자동 익스(ret2win-pie / ret2system-pie)**: PIE(ET_DYN)는 로드 base 를
-  **로컬 관측**(ASLR-off, `personality`+`/proc/pid/maps`)해 win/system 체인을 rebase
-  한 뒤 같은 조건에서 셸/제어 이전을 증명 — auto-exploit 이 PIE·amd64면 비 PIE 와
-  같은 순서로 ret2win-pie → (win 없으면) ret2system-pie 로 자동 폴백해 셸을 증명한다.
-  정직성: base 가 로컬 관측이라 *로컬* 익스 가능성 증명이며 원격 ASLR 우회가 아님
-  (`aslr="disabled-for-local-proof"` 명시)
+  ret2win(정렬 재시도) → ret2system(pop rdi→/bin/sh→system 자동 구성) →
+  **execve syscall ROP**(system 없는 정적 링크: pop rdi/rsi/rdx/rax + `/bin/sh` +
+  syscall 로 `execve("/bin/sh",0,0)` 구성) 순서로 **무입력 자동 검증**
+- **i386(32-bit) 자동 익스**: 32-bit tracee 도 x86-64 호스트 ptrace 로 관측(EIP→RIP
+  슬롯 매핑)해 오프셋을 확정하고, cdecl ret2system(스택 인자라 pop 가젯 불필요)으로
+  셸을 증명. SysV i386 16바이트 스택 정렬을 `ret` 가젯 0~3개로 맞춤(amd64 movaps
+  함정의 i386 판)
+- **PIE 자동 익스(ret2win-pie / ret2system-pie / execve-pie)**: PIE(ET_DYN)는 로드
+  base 를 **로컬 관측**(ASLR-off, `personality`+`/proc/pid/maps`)해 win/system/execve
+  체인을 rebase 한 뒤 같은 조건에서 셸/제어 이전을 증명 — auto-exploit 이 PIE·amd64면
+  비 PIE 와 같은 순서로 ret2win-pie → ret2system-pie → execve-pie 로 자동 폴백해 셸을
+  증명. 정직성: base 가 로컬 관측이라 *로컬* 익스 가능성 증명이며 원격 ASLR 우회가
+  아님(`aslr="disabled-for-local-proof"` 명시)
+- **PIE 진짜 in-band leak(포맷스트링, `auto-fmt-leak`)**: 위 PIE 경로가 base 를 로컬
+  관측하는 것과 달리, 대상이 **스스로 흘리는 포맷스트링 취약점**으로 base 를 런타임에
+  복원 — **ASLR 이 켜져 있어도 성립하는 진짜 leak**(매 실행 랜덤 base 여도 셸 증명).
+  샌드박스 동적 probe 로 leak 위치·오버플로 오프셋을 자체 확정하고, 2단계(leak→base
+  계산→rebase ret2win)로 셸을 증명(`aslr="defeated-via-inband-leak"`). auto-exploit 이
+  단일 cyclic 확정에 실패한 PIE·amd64 에서 폴백으로 자동 시도
 - **익스 검증**: 구성한 payload/ROP 체인을 실제 주입해 제어 흐름 탈취를 확인
   (마커 매치 또는 control-transfer)
 - **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,
@@ -210,6 +221,25 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   정직성 캡션**, 그리고 **spawn 된 셸 세션 출력으로 셸 획득 증명**)를 확인. 비활성
   배포에서는 안내(503)로 처리
 
+### Ghidra 디컴파일 백엔드 (opt-in, 기본 비활성)
+
+규칙 기반 pseudo-C 위에 **진짜 디컴파일러(Ghidra headless)** 를 선택 백엔드로 통합.
+`PLAB_GHIDRA_ENABLED=1` 로 켠 경우에만 동작하고, 없거나 실패하면 규칙 기반으로 폴백
+합니다. Ghidra 는 바이너리를 **실행하지 않고** 정적 분석만 합니다(샌드박스 러너와
+성격이 다름). 상세는 [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md).
+
+- **디컴파일(`decompile-ghidra`)**: `analyzeHeadless` 로 임포트·분석 후 함수별 C 를
+  회수(Ghidra 12 는 PyGhidra 대신 Java post-script 사용)
+- **vuln_scan/strategy 피드백(`analyze-ghidra`)**: Ghidra 가 복원한 **실제 버퍼 크기 +
+  스택 프레임 레이아웃**으로 확정 스택 오버플로를 도출한다. 정적 disasm 휴리스틱이
+  `-O2`/스트립에서 놓치는 것을 `gets`/`read`/`fgets` 크기 비교로 **확정**하고, 정확한
+  오프셋(`= return_addr_offset − buffer_stack_offset`)을 계산해 정적 finding 을
+  `ghidra_confirmed` 로 승격하고 strategy 스켈레톤에 주입(정적 추정이라 정직하게
+  `offset_verification="static-ghidra"` 라벨). 실측: `char buf[64]`→72, 2-버퍼→200 이
+  동적 확정값과 일치
+- **UI**: ELF Workspace 의 `Ghidra` 탭에서 온디맨드로 실행해 확정 오버플로·주입 오프셋·
+  승격 취약점·함수별 디컴파일 C 를 확인(비활성이면 pseudo-C 폴백 안내)
+
 ### 재사용된 정적 분석 기능
 
 | 분석 | 현재 내용 |
@@ -221,7 +251,7 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
 | Functions / CFG | 근거 기반 함수 경계, 기본 블록, direct edge와 xref |
 | ROP | exact decode gadget metadata, semantic filter, inferred chain layout model |
 | Exploit strategy | checksec·위험 API·win 함수·문자열·gadget 근거를 종합한 후보 공격 경로와 pwntools 초안 (모두 inferred) |
-| Pseudo-C | 단일 함수 디스어셈블의 규칙 기반 C 유사 의사코드 (휴리스틱, 진짜 디컴파일 아님) |
+| Pseudo-C | 단일 함수 디스어셈블의 규칙 기반 C 유사 의사코드 (휴리스틱); 선택적으로 Ghidra headless 진짜 디컴파일 백엔드로 승격 (opt-in) |
 | Strings | ASCII, UTF-16LE |
 | GOT/PLT | verified relocation target과 inferred PLT stub |
 | Hex | 서버 pagination 기반 512-byte page |
@@ -330,11 +360,14 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `POST` | `/binaries/{binary_id}/rop/simulate` | 제한된 정적 chain layout 모델 |
 | `GET` | `/binaries/{binary_id}/strategy` | 근거 기반 후보 exploit 경로와 pwntools 초안 (ELF 전용) |
 | `POST` | `/binaries/{binary_id}/confirm-offset` | 동적 반환 오프셋 확정 (샌드박스, 기본 비활성 → 503) |
-| `POST` | `/binaries/{binary_id}/auto-exploit` | 전략 + 확정 오프셋 주입 + ret2win/ret2system 자동 검증 |
+| `POST` | `/binaries/{binary_id}/auto-exploit` | 전략 + 확정 오프셋 주입 + ret2win/ret2system/execve/PIE/i386/fmt-leak 자동 검증(셸 증명) |
 | `POST` | `/binaries/{binary_id}/verify-exploit` | 구성한 payload/ROP 체인 주입으로 익스 검증 |
 | `POST` | `/binaries/{binary_id}/leak` | `puts(puts@got)` 런타임 libc 주소 유출 |
 | `POST` | `/binaries/{binary_id}/auto-ret2libc` | 완전 자동 2단계 ret2libc (leak→base→system, amd64; in-process·컨테이너) |
+| `POST` | `/binaries/{binary_id}/auto-fmt-leak` | PIE 포맷스트링 in-band leak (base 유출→rebase ret2win→셸, ASLR 우회; 오프셋 자체 확정) |
 | `GET` | `/binaries/{binary_id}/functions/{address}/pseudocode` | 함수 규칙 기반 pseudo-C 초안 |
+| `POST` | `/binaries/{binary_id}/decompile-ghidra` | Ghidra headless 진짜 디컴파일 (opt-in → 비활성 시 available:false) |
+| `POST` | `/binaries/{binary_id}/analyze-ghidra` | Ghidra 피드백: 확정 오버플로·정확 오프셋으로 vuln_scan/strategy 승격 (opt-in) |
 | `GET` | `/binaries/{binary_id}/strings` | 문자열 |
 | `GET` | `/binaries/{binary_id}/disassembly` | 디스어셈블리 |
 | `GET` | `/binaries/{binary_id}/hex` | paginated hex |
@@ -393,6 +426,11 @@ Backend 설정은 `PLAB_` prefix 환경변수로 관리합니다.
 | `PLAB_DATABASE_URL` | `sqlite:///./pwnable_lab.db` | SQLAlchemy URL |
 | `PLAB_AUTO_CREATE_SCHEMA` | `true` | 로컬 편의용 create_all; Compose는 false |
 | `PLAB_CORS_ORIGINS` | localhost Vite origins | 허용 origin JSON |
+| `PLAB_SANDBOX_EXECUTION_ENABLED` | `false` | 동적 auto-exploit 마스터 게이트 (기본 비활성) |
+| `PLAB_SANDBOX_EXECUTOR` | `inprocess` | `inprocess` 또는 `container`(프로덕션 권장) |
+| `PLAB_GHIDRA_ENABLED` | `false` | Ghidra 디컴파일 백엔드 활성화 (기본 비활성) |
+| `PLAB_GHIDRA_HOME` | 자동 탐지 | ghidra 설치 경로(비면 `~/.local/ghidra_*`) |
+| `PLAB_JAVA_HOME` | 자동 탐지 | JDK 21+ 경로(Ghidra 12 요구) |
 
 실제 API key, 인증 secret, 외부 서버, 운영 domain, cloud credential은 예제 값으로도
 커밋하지 않습니다. [`.env.example`](.env.example)에는 placeholder만 있습니다.
@@ -472,8 +510,11 @@ Pwnable_Lab/
 - 위험 함수 결과는 symbol/direct-call heuristic이며 취약점을 확정하지 않습니다.
 - 인증/사용자별 ownership/rate limit이 아직 없으므로 현재 버전을 공개 인터넷에 노출하지
   마세요.
-- 동적 분석은 network-disabled disposable sandbox가 완성되는 Phase 6 전에는 제공하지
-  않습니다.
+- 동적 auto-exploit(Phase 6)은 **기본 비활성**이며, `PLAB_SANDBOX_EXECUTION_ENABLED=1`
+  로 명시적으로 켠 경우에만 network-disabled 일회용 샌드박스에서 실행됩니다. 프로덕션은
+  `PLAB_SANDBOX_EXECUTOR=container`(gVisor 권장)로만 노출하세요.
+- Ghidra 디컴파일(opt-in)은 바이너리를 실행하지 않고 정적 분석만 하지만, 무거운
+  파서 attack surface 이므로 신뢰 경계 안에서만 켜세요.
 - Docker socket을 backend에 마운트하는 구조는 운영 설계로 사용하지 않습니다.
 
 ## 로드맵
@@ -484,9 +525,13 @@ Pwnable_Lab/
   frame-pointer backtrace 1차 완료; snapshot diff 후속
 - Phase 5: 근거 기반 exploit strategy와 pwntools draft, 규칙 기반 pseudo-C 1차 구현 완료;
   libc leak/ASLR 흐름과 자동 오프셋 정밀화는 후속
-- Phase 6A: **비대화형 disposable sandbox 기반 자동 exploit 실행** — 업로드 바이너리를
-  network-disabled sandbox 에서 구동해 오프셋을 자동 확정하고 Phase 5 전략을 실제로
-  실행/검증하는 다음 우선 목표. 설계 노트: [`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md)
+- Phase 6 auto-exploit sandbox: **구현 완료(opt-in)** — network-disabled 일회용
+  샌드박스에서 오프셋 자동 확정 후 ret2win/ret2system/execve/ret2libc, i386 ret2system,
+  PIE(ret2win/ret2system/execve)-pie, 포맷스트링 in-band leak 까지 셸 획득을 자동
+  증명. Ghidra 디컴파일 백엔드를 vuln_scan/strategy 에 피드백. 설계 노트:
+  [`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md),
+  [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 후속: 32-bit PIE·자동 포맷스트링
+  GOT overwrite·인터랙티브 원격 흐름
 - Phase 6B: GDB/MI와 WebSocket interactive debugger
 - Phase 6C: packing/UPX/obfuscation/runtime strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance
