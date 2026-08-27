@@ -22,6 +22,11 @@ from pwnable_lab.analyzer.gadgets import (
     scan_gadgets,
     simulate_chain,
 )
+from pwnable_lab.analyzer.ghidra import (
+    GhidraError,
+    decompile_with_ghidra,
+    ghidra_available,
+)
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
@@ -805,6 +810,42 @@ class AnalysisService:
         return confirm_offset_in_process(
             data, pattern_length=length, settings=self.settings
         )
+
+    def ghidra_available(self) -> bool:
+        """Ghidra 디컴파일 백엔드가 활성이고 설치돼 있는지."""
+
+        return self.settings.ghidra_enabled and ghidra_available(
+            self.settings.ghidra_home, self.settings.java_home
+        )
+
+    def decompile_ghidra(self, data: bytes) -> dict:
+        """Ghidra headless 로 바이너리 전체를 디컴파일한다(진짜 디컴파일러).
+
+        기본 비활성(``PLAB_GHIDRA_ENABLED``). 미설치/비활성이면 규칙 기반 pseudo-C
+        폴백을 쓰라는 신호로 ``{"available": False, ...}`` 를 반환하고, 실패하면
+        같은 형태로 ``error`` 를 담는다(예외를 던지지 않아 UI 가 폴백하기 쉽다).
+        Ghidra 는 바이너리를 실행하지 않고 정적 분석만 한다.
+        """
+
+        self._require_format(data, ArtifactFormat.ELF, feature="Ghidra decompile")
+        if not self.settings.ghidra_enabled:
+            return {"available": False, "reason": "ghidra-disabled"}
+        if not ghidra_available(self.settings.ghidra_home, self.settings.java_home):
+            return {"available": False, "reason": "ghidra-not-installed"}
+        try:
+            result = decompile_with_ghidra(
+                data,
+                max_functions=self.settings.ghidra_max_functions,
+                timeout_seconds=self.settings.ghidra_timeout_seconds,
+                ghidra_home=self.settings.ghidra_home,
+                java_home=self.settings.java_home,
+            )
+        except GhidraError as exc:
+            logger.warning("ghidra decompile 실패: %s", exc)
+            return {"available": True, "succeeded": False, "error": str(exc)}
+        result["available"] = True
+        result["succeeded"] = True
+        return result
 
     def pseudo_c(self, data: bytes, *, address: int) -> dict:
         """단일 함수의 규칙 기반 pseudo-C 초안."""

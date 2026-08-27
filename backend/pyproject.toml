@@ -36,6 +36,10 @@ dev = [
 [tool.setuptools.packages.find]
 include = ["pwnable_lab*"]
 
+[tool.setuptools.package-data]
+# Ghidra headless 디컴파일용 번들 Java 스크립트를 패키지에 포함한다.
+"pwnable_lab.analyzer" = ["ghidra_scripts/*.java"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

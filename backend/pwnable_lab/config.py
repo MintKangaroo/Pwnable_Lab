@@ -77,6 +77,17 @@ class Settings(BaseSettings):
     sandbox_container_pids: int = Field(default=128, gt=0, le=100_000)
     sandbox_container_tmp_size: str = "64m"
 
+    # Ghidra 디컴파일 백엔드(선택). 설치돼 있고 활성일 때만 진짜 디컴파일을 제공하고,
+    # 아니면 기존 규칙 기반 pseudo-C 로 폴백한다. Ghidra 는 바이너리를 **실행하지 않고**
+    # 정적 분석만 하지만(샌드박스 러너와 다름), 무거우므로 기본 비활성이며 온디맨드다.
+    #   PLAB_GHIDRA_HOME  — ghidra 설치 경로(비면 ~/.local/ghidra_* 자동 탐지).
+    #   PLAB_JAVA_HOME    — JDK 경로(비면 PATH 의 java / ~/.local/jdk/jdk-* 자동 탐지).
+    ghidra_enabled: bool = False
+    ghidra_home: str = ""
+    java_home: str = ""
+    ghidra_timeout_seconds: float = Field(default=180.0, gt=0, le=1800)
+    ghidra_max_functions: int = Field(default=200, gt=0, le=5000)
+
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
