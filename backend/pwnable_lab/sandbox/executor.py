@@ -182,6 +182,16 @@ def auto_execve_in_container(
     )
 
 
+def auto_ret2system32_in_container(
+    data: bytes, *, offset: int, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 완전 자동 i386 ret2system(셸 증명까지)을 수행한다."""
+
+    return _run_container(
+        settings, ["--stdin", "--auto-ret2system32", "--offset", str(offset)], data
+    )
+
+
 def auto_execve_pie_in_container(
     data: bytes, *, offset: int, settings: _ExecutorSettings
 ) -> dict:

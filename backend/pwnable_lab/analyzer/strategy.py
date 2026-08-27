@@ -965,6 +965,25 @@ def ret2system_plan(image: ElfImage) -> dict | None:
     return {"pop_rdi": pop_rdi, "binsh": binsh, "system": system}
 
 
+def ret2system_plan32(image: ElfImage) -> dict | None:
+    """i386(32-bit) ret2system 구성요소(system, /bin/sh)를 정적으로 수집.
+
+    32-bit cdecl 은 인자를 **스택으로** 넘기므로 amd64 처럼 ``pop rdi`` 가젯이
+    필요 없다. 반환 주소를 ``system`` 으로 덮고 그 뒤에 ``[반환주소][&"/bin/sh"]``
+    를 쌓으면 ``system("/bin/sh")`` 가 성립한다(가젯 불필요). ``system`` 주소(PLT
+    또는 정의 심볼)와 ``/bin/sh`` 문자열을 모두 non-PIE 절대주소로 찾으면
+    ``{"system", "binsh"}`` 를 반환하고, 하나라도 없으면 None. 64-bit 은 대상 아님.
+    """
+
+    if (image.bits or 64) != 32:
+        return None
+    system = _system_address(image)
+    binsh = find_binsh(image)
+    if system is None or binsh is None:
+        return None
+    return {"system": system, "binsh": binsh}
+
+
 def execve_plan(image: ElfImage) -> dict | None:
     """amd64 execve("/bin/sh", 0, 0) syscall ROP 체인 구성요소를 정적으로 수집.
 
