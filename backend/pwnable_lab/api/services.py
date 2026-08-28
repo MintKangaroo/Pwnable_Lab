@@ -16,6 +16,7 @@ from pwnable_lab.analyzer.crash_log import Limits, analyze_crash_log
 from pwnable_lab.analyzer.decompile import decompile_function
 from pwnable_lab.analyzer.disasm import disassemble
 from pwnable_lab.analyzer.entropy import raw_entropy_windows, shannon_entropy
+from pwnable_lab.analyzer.exploit_script import build_exploit_script
 from pwnable_lab.analyzer.gadgets import (
     GadgetFilter,
     filter_gadgets,
@@ -375,11 +376,18 @@ class AnalysisService:
                 if fmt.get("succeeded"):
                     verification = fmt
 
-        return {
+        # 셸이 증명된 비 PIE 절대주소 기법은 확정 오프셋·주소로 완성된(원격 가능한)
+        # pwntools 스크립트를 생성한다(PIE/fmt-leak 는 base leak 이 필요 → None).
+        result: dict = {
             "strategy": strategy,
             "confirmation": confirmation,
             "verification": verification,
         }
+        script_offset = confirmation.get("offset")
+        script = build_exploit_script(parse_elf(data), verification, script_offset)
+        if script is not None:
+            result["exploit_script"] = script
+        return result
 
     def _auto_verify(self, data: bytes, offset: int) -> dict:
         """확정 오프셋으로 익스 기법을 순서대로 자동 시도한다(ret2win → ret2system → execve).
