@@ -1933,6 +1933,38 @@ function ShellSession({ proof }) {
   );
 }
 
+function ExploitScriptCard({ script }) {
+  // 샌드박스 셸 증명 후 생성된 완성 pwntools 스크립트(로컬↔원격 토글 포함).
+  if (!script) return null;
+  const chainLabel = script.chain
+    ? `${script.technique} · ${script.chain}`
+    : script.technique;
+  return (
+    <div className="exploit-script">
+      <div className="pseudo-c-toolbar">
+        <div className="exploit-script-head">
+          <strong>완성 익스 스크립트 — {script.filename}</strong>
+          <Badge tone={script.remote_ready ? 'green' : 'danger'}>
+            {script.remote_ready ? '원격 가능(remote-ready)' : '로컬 전용'}
+          </Badge>
+          <span className="exploit-script-tech">{chainLabel}</span>
+        </div>
+        <CopyButton value={script.script} />
+      </div>
+      {script.notes?.length > 0 && (
+        <ul className="exploit-script-notes">
+          {script.notes.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      )}
+      <pre className="pseudo-c-code">
+        <code>{script.script}</code>
+      </pre>
+    </div>
+  );
+}
+
 function PieBaseNote({ ver }) {
   // PIE 자동 익스(ret2win-pie / ret2system-pie)만: 로컬 관측 base·rebase 타깃·정직성.
   if (!ver || ver.aslr !== 'disabled-for-local-proof') return null;
@@ -2031,7 +2063,7 @@ function ExploitRunner({ sha }) {
           <h3>Auto-Exploit</h3>
           <span>
             오프셋 확정 → 스켈레톤 주입 → ret2win/ret2system 자동 검증 (PIE 는 base 로컬
-            관측 후 rebase)
+            관측 후 rebase) → 셸 증명 시 완성 pwntools 스크립트 생성
           </span>
         </div>
         <div className="runner-actions">
@@ -2092,6 +2124,7 @@ function ExploitRunner({ sha }) {
             )}
             <PieBaseNote ver={ver} />
             {ver?.shell_proof && <ShellSession proof={ver.shell_proof} />}
+            <ExploitScriptCard script={autoState.result?.exploit_script} />
             {injectedPaths.map((p) => (
               <div key={p.id} className="path-section">
                 <div className="pseudo-c-toolbar">
@@ -2314,8 +2347,8 @@ function GhidraView({ sha }) {
           Ghidra headless 로 <strong>실제 디컴파일</strong>하고, 복원한 버퍼 크기·스택
           프레임을 vuln_scan/strategy 에 피드백합니다. 정적 disasm 휴리스틱이 놓치는
           오버플로를 <strong>확정</strong>하고 정확한 오프셋을 계산합니다(실행이 아니라
-          정적 추정 — <code>static-ghidra</code>). 서버에서 <code>PLAB_GHIDRA_ENABLED=1</code>
-          로 켠 경우에만 동작합니다.
+          정적 추정 — <code>static-ghidra</code>). 서버에서{' '}
+          <code>PLAB_GHIDRA_ENABLED=1</code>로 켠 경우에만 동작합니다.
         </p>
         <div className="runner-actions">
           <button
@@ -2405,12 +2438,9 @@ function GhidraOverflows({ insights }) {
               {i.confirmed ? '확정' : '가능'}
             </Badge>
             <code>
-              {i.function}() · {i.sink}() → {i.buffer_name}[
-              {i.buffer_size ?? '?'}]
+              {i.function}() · {i.sink}() → {i.buffer_name}[{i.buffer_size ?? '?'}]
             </code>
-            {i.confirmed && (
-              <span className="ghidra-offset">offset = {i.offset}</span>
-            )}
+            {i.confirmed && <span className="ghidra-offset">offset = {i.offset}</span>}
           </div>
           <p className="ghidra-evidence">{i.evidence}</p>
         </div>
@@ -2459,9 +2489,7 @@ function GhidraFunctions({ functions, openFn, setOpenFn }) {
               className="ghidra-fn-head"
               onClick={() => setOpenFn(openFn === f.entry ? null : f.entry)}
             >
-              <span className="ghidra-fn-caret">
-                {openFn === f.entry ? '▾' : '▸'}
-              </span>
+              <span className="ghidra-fn-caret">{openFn === f.entry ? '▾' : '▸'}</span>
               <code>{f.signature || f.name}</code>
               <span className="ghidra-fn-entry">{f.entry}</span>
             </button>
