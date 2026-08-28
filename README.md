@@ -217,6 +217,11 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   emit — 진짜 in-band leak 이라 ASLR 켜진 원격에서도 성립(remote-ready). 반면 base 를
   ASLR-off 로컬 관측하는 나머지 PIE 경로(ret2win-pie 등)는 원격 우회가 아니라 스크립트
   대신 전략 스켈레톤 유지
+- **원격 흐름 실측(`sandbox.remote`)**: 확정 payload 가 실제 **TCP 서비스**에서도 셸을
+  따는지 소켓으로 증명(`prove_shell_remote`) — 생성 스크립트의 *remote-ready* 주장을
+  네트워크 연결로 뒷받침. **트러스트 모델상 network-disabled 샌드박스와 분리**된
+  클라이언트측 유틸리티로, 바이너리를 실행하지 않고 사용자가 지정한 원격에 바이트만
+  보낸다(서버 아웃바운드 SSRF 위험을 만들지 않도록 HTTP API 미노출)
 - **익스 검증**: 구성한 payload/ROP 체인을 실제 주입해 제어 흐름 탈취를 확인
   (마커 매치 또는 control-transfer)
 - **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,
