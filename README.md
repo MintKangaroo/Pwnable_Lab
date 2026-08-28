@@ -195,18 +195,25 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   슬롯 매핑)해 오프셋을 확정하고, cdecl ret2system(스택 인자라 pop 가젯 불필요)으로
   셸을 증명. SysV i386 16바이트 스택 정렬을 `ret` 가젯 0~3개로 맞춤(amd64 movaps
   함정의 i386 판)
-- **PIE 자동 익스(ret2win-pie / ret2system-pie / execve-pie)**: PIE(ET_DYN)는 로드
-  base 를 **로컬 관측**(ASLR-off, `personality`+`/proc/pid/maps`)해 win/system/execve
+- **PIE 자동 익스(ret2win-pie / ret2system-pie / execve-pie, amd64·i386)**: PIE(ET_DYN)는
+  로드 base 를 **로컬 관측**(ASLR-off, `personality`+`/proc/pid/maps`)해 win/system/execve
   체인을 rebase 한 뒤 같은 조건에서 셸/제어 이전을 증명 — auto-exploit 이 PIE·amd64면
   비 PIE 와 같은 순서로 ret2win-pie → ret2system-pie → execve-pie 로 자동 폴백해 셸을
-  증명. 정직성: base 가 로컬 관측이라 *로컬* 익스 가능성 증명이며 원격 ASLR 우회가
-  아님(`aslr="disabled-for-local-proof"` 명시)
+  증명. **i386(32-bit) PIE 도 동일 base 관측 인프라로 cdecl ret2system-pie 지원**(정렬은
+  rebase 한 `ret` 0~3개로). 정직성: base 가 로컬 관측이라 *로컬* 익스 가능성 증명이며
+  원격 ASLR 우회가 아님(`aslr="disabled-for-local-proof"` 명시)
 - **PIE 진짜 in-band leak(포맷스트링, `auto-fmt-leak`)**: 위 PIE 경로가 base 를 로컬
   관측하는 것과 달리, 대상이 **스스로 흘리는 포맷스트링 취약점**으로 base 를 런타임에
   복원 — **ASLR 이 켜져 있어도 성립하는 진짜 leak**(매 실행 랜덤 base 여도 셸 증명).
   샌드박스 동적 probe 로 leak 위치·오버플로 오프셋을 자체 확정하고, 2단계(leak→base
-  계산→rebase ret2win)로 셸을 증명(`aslr="defeated-via-inband-leak"`). auto-exploit 이
-  단일 cyclic 확정에 실패한 PIE·amd64 에서 폴백으로 자동 시도
+  계산→rebase 체인)로 셸을 증명(`aslr="defeated-via-inband-leak"`). 체인은 대상 재료에
+  맞춰 자동 선택(win 有→ret2win, 無→**ret2system/execve** — win 없는 실전 PIE 포함).
+  auto-exploit 이 단일 cyclic 확정에 실패한 PIE·amd64 에서 폴백으로 자동 시도
+- **완성 pwntools 스크립트 생성(`exploit_script`)**: 비 PIE 절대주소 기법(ret2win /
+  ret2system / execve / i386 ret2system)이 샌드박스에서 셸 증명되면, 확정 오프셋·주소로
+  로컬 `process()` ↔ 원격 `remote(HOST,PORT)` 토글이 붙은 **바로 실행 가능한** pwntools
+  스크립트를 auto-exploit 응답에 함께 반환(TODO 없는 완성본, 확정값이 원격에서도 유효).
+  PIE·fmt-leak 은 base leak 이 필요해 스크립트 대신 전략 스켈레톤 유지
 - **익스 검증**: 구성한 payload/ROP 체인을 실제 주입해 제어 흐름 탈취를 확인
   (마커 매치 또는 control-transfer)
 - **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,
