@@ -213,7 +213,10 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   ret2system / execve / i386 ret2system)이 샌드박스에서 셸 증명되면, 확정 오프셋·주소로
   로컬 `process()` ↔ 원격 `remote(HOST,PORT)` 토글이 붙은 **바로 실행 가능한** pwntools
   스크립트를 auto-exploit 응답에 함께 반환(TODO 없는 완성본, 확정값이 원격에서도 유효).
-  PIE·fmt-leak 은 base leak 이 필요해 스크립트 대신 전략 스켈레톤 유지
+  **fmt-leak-pie 는 1단계 포맷스트링 leak→base 복원→2단계 rebase 체인의 완성 스크립트**로
+  emit — 진짜 in-band leak 이라 ASLR 켜진 원격에서도 성립(remote-ready). 반면 base 를
+  ASLR-off 로컬 관측하는 나머지 PIE 경로(ret2win-pie 등)는 원격 우회가 아니라 스크립트
+  대신 전략 스켈레톤 유지
 - **익스 검증**: 구성한 payload/ROP 체인을 실제 주입해 제어 흐름 탈취를 확인
   (마커 매치 또는 control-transfer)
 - **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,

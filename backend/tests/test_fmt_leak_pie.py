@@ -153,6 +153,14 @@ def test_auto_exploit_falls_back_to_fmt_leak(fmt_bin):
     assert v["technique"] == "fmt-leak-pie"
     assert v["succeeded"] is True
     assert v["aslr"] == "defeated-via-inband-leak"
+    # 확정 결과로 2단계(leak→rebase) 완성 스크립트도 함께 생성돼야 한다.
+    script = result["exploit_script"]
+    assert script["technique"] == "fmt-leak-pie"
+    assert script["remote_ready"] is True
+    text = script["script"]
+    assert 'p.sendline(b"%' in text and "$p" in text
+    assert "base = leaked -" in text
+    assert "win = base + 0x" in text
 
 
 # win 함수 없는 PIE — system + "/bin/sh" + pop rdi 가젯만 존재. fmt-leak 로 base 를
