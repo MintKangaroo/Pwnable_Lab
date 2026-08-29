@@ -65,6 +65,11 @@ class SandboxLimits:
     shell_process_headroom: int = 64
     stack_peek_words: int = 8
     capture_stdout_bytes: int = 4096  # stdout 캡처 상한(payload 검증용)
+    # PTY 셸 증명에서 payload 전송 후 echo 명령을 흘리기까지의 settle 딜레이.
+    # 대상이 payload 를 소비할 시간을 벌어 payload+명령이 한 read 로 합쳐져
+    # 명령이 오버플로 버퍼로 흡수되는 것을 막는다(원격 경로 remote.py 와 동일
+    # 함정). 부하가 큰 CI 에서 간헐 실패하면 키운다.
+    shell_settle_seconds: float = 0.3
 
     def validate(self) -> None:
         if self.wall_seconds <= 0 or self.cpu_seconds <= 0:
@@ -73,6 +78,8 @@ class SandboxLimits:
             raise SandboxError("stack_peek_words 는 1 이상이어야 합니다.")
         if self.capture_stdout_bytes < 0:
             raise SandboxError("capture_stdout_bytes 는 0 이상이어야 합니다.")
+        if self.shell_settle_seconds < 0:
+            raise SandboxError("shell_settle_seconds 는 0 이상이어야 합니다.")
 
 
 @dataclass
@@ -910,7 +917,7 @@ def verify_shell(
     output = bytearray()
     try:
         os.write(master, payload + b"\n")
-        time.sleep(0.15)
+        time.sleep(limits.shell_settle_seconds)
         os.write(master, cmd.encode() + b"\n")
     except OSError:
         pass
@@ -1031,7 +1038,7 @@ def run_two_stage_shell(
         # 2단계를 보낸 뒤 셸에 명령을 흘린다(짧은 대기 후 1회).
         elif stage2_sent and not command_sent:
             command_sent = True
-            time.sleep(0.15)
+            time.sleep(limits.shell_settle_seconds)
             try:
                 os.write(master, cmd.encode() + b"\n")
             except OSError:
