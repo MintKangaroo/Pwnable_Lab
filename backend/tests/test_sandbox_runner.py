@@ -107,6 +107,18 @@ def test_run_with_input_observation_shape(vuln_binary):
     assert payload["rsp_hex"].startswith("0x")
 
 
+def test_limits_validate_rejects_bad_values():
+    SandboxLimits().validate()  # 기본값은 유효
+    with pytest.raises(SandboxError):
+        SandboxLimits(wall_seconds=0).validate()
+    with pytest.raises(SandboxError):
+        SandboxLimits(stack_peek_words=0).validate()
+    with pytest.raises(SandboxError):
+        SandboxLimits(capture_stdout_bytes=-1).validate()
+    with pytest.raises(SandboxError):
+        SandboxLimits(shell_settle_seconds=-0.1).validate()
+
+
 def test_missing_binary_raises_sandbox_error():
     with pytest.raises(SandboxError):
         run_with_input("/nonexistent/path/binary", b"x\n")

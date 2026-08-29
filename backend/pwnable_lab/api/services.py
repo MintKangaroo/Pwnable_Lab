@@ -1519,8 +1519,11 @@ def _page(items: list[dict], *, offset: int, limit: int) -> dict:
 def _parse_leaked_address(verification: dict) -> int | None:
     """leak 체인 실행 결과의 stdout(hex)에서 유출된 포인터를 복원한다.
 
-    ``puts`` 는 GOT 슬롯 바이트를 null 까지 출력한 뒤 개행을 붙이므로, 첫 줄
-    바이트를 리틀엔디언 정수로 해석한다. 유출이 없으면 None.
+    ``puts`` 는 GOT 슬롯 바이트를 null 까지 출력한 뒤 개행 '하나'를 덧붙인다.
+    유출된 libc 포인터 바이트 안에 ``0x0a`` 가 섞이면(ASLR 로 매 실행 달라짐)
+    첫 개행 기준 분리는 주소를 중간에서 잘라 먹으므로, puts 가 덧붙인 '마지막'
+    개행 하나만 제거하고 남은 바이트를 리틀엔디언 포인터로 해석한다. 이 leak
+    체인은 puts→exit 라 stdout 이 유출 한 줄뿐이다. 유출이 없으면 None.
     """
 
     hexstr = verification.get("observation", {}).get("stdout_hex")
@@ -1530,7 +1533,8 @@ def _parse_leaked_address(verification: dict) -> int | None:
         raw = bytes.fromhex(hexstr)
     except ValueError:
         return None
-    line = raw.split(b"\n", 1)[0]
-    if not line:
+    if raw.endswith(b"\n"):
+        raw = raw[:-1]  # puts 가 덧붙인 종료 개행만 제거(주소 내부 0x0a 는 보존)
+    if not raw:
         return None
-    return int.from_bytes(line[:8], "little")
+    return int.from_bytes(raw[:8], "little")

@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from pwnable_lab.api.services import AnalysisService
+from pwnable_lab.api.services import AnalysisService, _parse_leaked_address
 from pwnable_lab.config import Settings
 from pwnable_lab.errors import SandboxError
 
@@ -31,6 +31,30 @@ def _service():
     return AnalysisService(
         Settings(sandbox_execution_enabled=True, sandbox_executor="inprocess")
     )
+
+
+def _obs(stdout: bytes) -> dict:
+    return {"observation": {"stdout_hex": stdout.hex()}}
+
+
+def test_parse_leaked_address_preserves_internal_newline_byte():
+    # 유출된 6바이트 libc 포인터 0x7fXX0aa80d50 — 인덱스 3 바이트가 0x0a 다.
+    # puts 는 이 6바이트를 그대로 찍고 종료 개행 하나를 붙인다. 첫 개행 기준
+    # 분리는 0x0a 에서 잘려 0xa80d50(3바이트)만 남기던 회귀를 막는다.
+    addr = 0x7F120AA80D50
+    stdout = addr.to_bytes(6, "little") + b"\n"
+    assert _parse_leaked_address(_obs(stdout)) == addr
+
+
+def test_parse_leaked_address_without_internal_newline():
+    addr = 0x7FABCDEF1230
+    assert _parse_leaked_address(_obs(addr.to_bytes(6, "little") + b"\n")) == addr
+
+
+def test_parse_leaked_address_empty_is_none():
+    assert _parse_leaked_address(_obs(b"")) is None
+    assert _parse_leaked_address(_obs(b"\n")) is None
+    assert _parse_leaked_address({}) is None
 
 
 def test_leak_disabled_raises():
