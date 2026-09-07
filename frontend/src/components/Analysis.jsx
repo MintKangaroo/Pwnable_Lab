@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, formatBytes, formatHex } from '../api';
 import {
   Badge,
@@ -32,6 +32,7 @@ const tabsForFormat = (format) => {
       ['got', 'GOT / PLT'],
       ['strategy', 'Exploit Strategy'],
       ['exploit-runner', 'Exploit Runner'],
+      ['debugger-ws', 'Live Debugger'],
       ['ghidra', 'Ghidra'],
       COMMON_TABS[4],
     ];
@@ -1747,6 +1748,7 @@ function Strategy({ sha }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
   const [openPath, setOpenPath] = useState('');
+  const [llmState, runLlm] = useSandboxAction(() => api.explainStrategy(sha));
 
   useEffect(() => {
     setReport(null);
@@ -1773,6 +1775,37 @@ function Strategy({ sha }) {
           </span>
         </div>
         <p className="strategy-disclaimer">{report.disclaimer}</p>
+      </section>
+
+      <section className="strategy-llm">
+        <div className="section-heading">
+          <h3>LLM 설명 (선택)</h3>
+          <span>정적 전략 요약을 자연어로 · 기본 비활성(외부 전송 없음)</span>
+        </div>
+        <button
+          className="button secondary"
+          disabled={llmState.status === 'running'}
+          onClick={() => runLlm()}
+        >
+          LLM 설명 생성
+        </button>
+        {llmState.status === 'running' && <Loading label="LLM 설명 생성 중" />}
+        {llmState.status === 'error' && <ErrorBanner message={llmState.error} />}
+        {llmState.status === 'done' &&
+          (llmState.result?.llm?.explanation ? (
+            <div className="strategy-llm-result">
+              <Badge tone="green">
+                {String(llmState.result.llm.provider || 'llm')}
+              </Badge>
+              <p className="strategy-llm-text">
+                {String(llmState.result.llm.explanation)}
+              </p>
+            </div>
+          ) : (
+            <p className="strategy-llm-note">
+              {String(llmState.result?.llm?.note || 'LLM 비활성 — 정적 전략만')}
+            </p>
+          ))}
       </section>
 
       <section className="strategy-primitives">
@@ -2491,6 +2524,201 @@ function ExploitRunner({ sha }) {
   );
 }
 
+function debuggerWsUrl(sha) {
+  const base = import.meta.env.VITE_API_BASE || '/api/v1';
+  const path = `/binaries/${sha}/debug/ws`;
+  if (base.startsWith('http')) {
+    return base.replace(/^http/, 'ws') + path;
+  }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${location.host}${base}${path}`;
+}
+
+function LiveDebugger({ sha }) {
+  const [status, setStatus] = useState('disconnected');
+  const [log, setLog] = useState([]);
+  const [bpAddr, setBpAddr] = useState('');
+  const socketRef = useRef(null);
+
+  const append = (dir, payload) =>
+    setLog((prev) => [
+      ...prev.slice(-199),
+      { dir, text: typeof payload === 'string' ? payload : JSON.stringify(payload) },
+    ]);
+
+  const closeSocket = () => {
+    const sock = socketRef.current;
+    if (sock) {
+      try {
+        if (sock.readyState === WebSocket.OPEN)
+          sock.send(JSON.stringify({ op: 'close' }));
+        sock.close();
+      } catch {
+        // 소켓이 이미 닫혔거나 사용 불가한 경우 무시.
+      }
+      socketRef.current = null;
+    }
+  };
+
+  // 컴포넌트 언마운트 시 소켓 정리.
+  useEffect(() => closeSocket, []);
+
+  const connect = () => {
+    closeSocket();
+    setLog([]);
+    setStatus('connecting');
+    let sock;
+    try {
+      sock = new WebSocket(debuggerWsUrl(sha));
+    } catch (reason) {
+      setStatus('error');
+      append('recv', { event: 'error', error: String(reason) });
+      return;
+    }
+    socketRef.current = sock;
+    sock.onmessage = (event) => {
+      let frame = event.data;
+      try {
+        frame = JSON.parse(event.data);
+      } catch {
+        // JSON 이 아니면 원문 그대로 로그.
+      }
+      if (frame && frame.event === 'ready') setStatus('ready');
+      else if (frame && frame.event === 'error') setStatus('error');
+      append('recv', frame);
+    };
+    sock.onerror = () => {
+      setStatus('error');
+      append('recv', { event: 'error', error: 'socket error' });
+    };
+    sock.onclose = () => {
+      setStatus('disconnected');
+      if (socketRef.current === sock) socketRef.current = null;
+    };
+  };
+
+  const send = (cmd) => {
+    const sock = socketRef.current;
+    if (!sock || sock.readyState !== WebSocket.OPEN) {
+      append('recv', { event: 'error', error: 'not connected' });
+      return;
+    }
+    append('sent', cmd);
+    sock.send(JSON.stringify(cmd));
+  };
+
+  const setBreakpoint = () => {
+    const addr = Number.parseInt(bpAddr.trim(), 16);
+    if (!Number.isFinite(addr) || addr <= 0) {
+      append('recv', { event: 'error', error: 'invalid breakpoint (hex)' });
+      return;
+    }
+    send({ op: 'break', addr });
+  };
+
+  const connected = status === 'ready' || status === 'connecting';
+  const canCommand = status === 'ready';
+  const statusTone = status === 'error' ? 'danger' : 'green';
+
+  return (
+    <div className="strategy-workspace ws-debugger">
+      <section className="strategy-intro">
+        <div className="section-heading">
+          <h3>Live Debugger (WebSocket)</h3>
+          <Badge tone={statusTone}>{status}</Badge>
+        </div>
+        <p className="strategy-disclaimer">
+          ptrace 라이브 디버그 세션을 WebSocket 으로 구동합니다. 신뢰할 수 없는
+          바이너리를 실행하므로 서버에서 샌드박스 실행이 켜진 배포에서만
+          동작합니다(아니면 연결 직후 오류 프레임).
+        </p>
+        <div className="runner-actions">
+          <button className="button primary" disabled={connected} onClick={connect}>
+            연결
+          </button>
+          <button
+            className="button secondary"
+            disabled={status === 'disconnected'}
+            onClick={closeSocket}
+          >
+            연결 해제
+          </button>
+        </div>
+      </section>
+
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>제어</h3>
+          <span>브레이크포인트 · 실행 · 레지스터 · 스택</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            breakpoint (hex)
+            <input
+              placeholder="0x401176"
+              value={bpAddr}
+              onChange={(e) => setBpAddr(e.target.value)}
+            />
+          </label>
+          <button
+            className="button secondary"
+            disabled={!canCommand}
+            onClick={setBreakpoint}
+          >
+            Set BP
+          </button>
+          <button
+            className="button secondary"
+            disabled={!canCommand}
+            onClick={() => send({ op: 'continue' })}
+          >
+            Continue
+          </button>
+          <button
+            className="button secondary"
+            disabled={!canCommand}
+            onClick={() => send({ op: 'step' })}
+          >
+            Step
+          </button>
+          <button
+            className="button secondary"
+            disabled={!canCommand}
+            onClick={() => send({ op: 'registers' })}
+          >
+            Registers
+          </button>
+          <button
+            className="button secondary"
+            disabled={!canCommand}
+            onClick={() => send({ op: 'stack', count: 6 })}
+          >
+            Stack
+          </button>
+        </div>
+      </section>
+
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>세션 로그</h3>
+          <span>{log.length} 프레임</span>
+        </div>
+        {log.length === 0 ? (
+          <Empty label="아직 프레임이 없습니다. 연결 후 명령을 보내세요." />
+        ) : (
+          <pre className="ws-debugger-log">
+            <code>
+              {log
+                .map((entry) => `${entry.dir === 'sent' ? '»' : '«'} ${entry.text}`)
+                .join('\n')}
+            </code>
+          </pre>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function GhidraView({ sha }) {
   const [state, run] = useSandboxAction(() => api.analyzeGhidra(sha));
   const [openFn, setOpenFn] = useState(null);
@@ -2829,6 +3057,7 @@ export function Analysis({
           {tab === 'gadgets' && <Gadgets sha={sha} onAddressChange={onAddressChange} />}
           {tab === 'strategy' && <Strategy sha={sha} />}
           {tab === 'exploit-runner' && <ExploitRunner sha={sha} />}
+          {tab === 'debugger-ws' && <LiveDebugger sha={sha} />}
           {tab === 'ghidra' && <GhidraView sha={sha} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}
