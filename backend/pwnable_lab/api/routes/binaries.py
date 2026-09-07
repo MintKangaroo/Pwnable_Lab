@@ -248,6 +248,26 @@ async def binary_runtime_strings(
     )
 
 
+@router.post("/{sha256}/oep")
+async def binary_oep(
+    sha256: str,
+    start: int | None = Query(default=None, ge=0, le=0xFFFFFFFFFFFF),
+    max_steps: int = Query(default=200_000, ge=1, le=5_000_000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """OEP 후보 탐지(언패킹 재구성 보조): 쓰기 가능·익명 실행으로의 첫 tail jump.
+
+    ptrace 단일스텝으로 제어가 원래 코드/라이브러리 밖의 쓰기 가능·익명 실행 영역으로
+    처음 이전되는 지점을 OEP 후보로 보고한다(외부 QEMU/rr 불필요). ``start`` 로 스텝
+    시작 주소를 지정하면 startup/스텁 앞부분을 건너뛴다. 기본 비활성 — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.oep_candidate, data, start=start, max_steps=max_steps
+    )
+
+
 @router.get("/{sha256}/strategy")
 def binary_strategy(
     sha256: str,
