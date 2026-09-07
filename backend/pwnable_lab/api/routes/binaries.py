@@ -268,6 +268,22 @@ async def binary_oep(
     )
 
 
+@router.post("/{sha256}/explain-strategy")
+async def binary_explain_strategy(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """정적 전략에 (선택적) LLM 자연어 설명을 덧붙인다 — 프라이버시 기본 차단.
+
+    LLM 이 비활성(기본)이면 어떤 데이터도 외부로 나가지 않고 정적 전략만 반환한다.
+    ``PLAB_LLM_ENABLED=1`` + provider 설정 시에만 **정적 전략 요약 텍스트**(바이너리
+    원본이 아님)를 provider 에 보내 설명을 받는다.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.explain_strategy, data)
+
+
 @router.get("/{sha256}/strategy")
 def binary_strategy(
     sha256: str,
