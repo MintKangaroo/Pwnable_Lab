@@ -97,3 +97,22 @@ def test_service_qemu_run_gated(tmp_path):
     assert result["attempted"] is True
     assert result["exit_code"] == 7
     assert "echo:HI" in result["stdout"]
+
+
+@_gated
+def test_qemu_strace_captures_syscalls(tmp_path):
+    path = _build_aarch64(tmp_path)
+    result = run_under_qemu(
+        path, stdin_data=b"PING\n", strace=True, limits=SandboxLimits()
+    )
+    assert result["attempted"] is True
+    assert result["exit_code"] == 7
+    syscalls = result["syscalls"]
+    assert isinstance(syscalls, list) and syscalls
+    joined = "\n".join(syscalls)
+    # aarch64 binary 는 read/write 계열과 exit_group 을 호출한다.
+    assert "read(" in joined
+    assert "exit_group(" in joined
+    # strace 모드에서는 syscall 트레이스가 stdout 에 섞이지 않는다.
+    assert "QEMU_ARM_OK" in result["stdout"]
+    assert "exit_group" not in result["stdout"]

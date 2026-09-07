@@ -53,16 +53,23 @@ def locate_qemu(arch: str) -> str | None:
     return shutil.which(f"qemu-{arch}-static") or shutil.which(f"qemu-{arch}")
 
 
+# -strace 출력에서 반환할 최대 syscall 라인 수(과도한 응답 방지).
+_MAX_SYSCALLS = 2000
+
+
 def run_under_qemu(
     binary_path: str,
     *,
     stdin_data: bytes = b"",
+    strace: bool = False,
     limits: SandboxLimits | None = None,
 ) -> dict:
     """대상 바이너리를 아키텍처에 맞는 qemu-user 로 실행하고 결과를 관측한다.
 
     자원 상한(CPU/주소공간)·프로세스그룹·wall-clock 타임아웃으로 감싼다. 반환은
     아키텍처·사용한 qemu·종료코드/시그널·타임아웃 여부·stdout(텍스트+hex)이다.
+    ``strace=True`` 면 qemu ``-strace`` 로 시스템콜 트레이스를 stderr 로 따로 받아
+    ``syscalls`` 목록으로 반환한다(크로스아키텍처 동적 syscall 분석).
     """
 
     limits = limits or SandboxLimits()
@@ -87,23 +94,26 @@ def run_under_qemu(
         resource.setrlimit(resource.RLIMIT_AS, (space, space))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
+    argv = [qemu] + (["-strace"] if strace else []) + [binary_path]
+    # strace 면 syscall 트레이스(stderr)를 stdout 과 분리, 아니면 합친다.
+    err_target = subprocess.PIPE if strace else subprocess.STDOUT
     proc = subprocess.Popen(
-        [qemu, binary_path],
+        argv,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
+        stderr=err_target,
         preexec_fn=_preexec,
     )
     timed_out = False
     try:
-        out, _ = proc.communicate(input=stdin_data, timeout=limits.wall_seconds)
+        out, err = proc.communicate(input=stdin_data, timeout=limits.wall_seconds)
     except subprocess.TimeoutExpired:
         timed_out = True
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             proc.kill()
-        out, _ = proc.communicate()
+        out, err = proc.communicate()
 
     out = out or b""
     cap = limits.capture_stdout_bytes
@@ -112,7 +122,7 @@ def run_under_qemu(
     rc = proc.returncode
     exit_code = rc if rc is not None and rc >= 0 else None
     term_signal = -rc if rc is not None and rc < 0 else None
-    return {
+    result = {
         "attempted": True,
         "arch": arch,
         "qemu": os.path.basename(qemu),
@@ -124,6 +134,26 @@ def run_under_qemu(
         "stdout": out.decode("utf-8", "replace"),
         "stdout_hex": out.hex(),
     }
+    if strace:
+        result["syscalls"] = _parse_strace(err or b"")
+    return result
+
+
+def _parse_strace(err: bytes) -> list[str]:
+    """qemu ``-strace`` stderr 를 시스템콜 라인 목록으로 파싱한다(pid 접두 제거)."""
+
+    lines: list[str] = []
+    for raw in err.decode("utf-8", "replace").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # "<pid> syscall(...) = rv" → pid 접두 제거.
+        head, _, rest = line.partition(" ")
+        line = rest if head.isdigit() and rest else line
+        lines.append(line)
+        if len(lines) >= _MAX_SYSCALLS:
+            break
+    return lines
 
 
 __all__ = ["locate_qemu", "qemu_arch", "run_under_qemu"]

@@ -331,17 +331,21 @@ async def binary_memdump(
 async def binary_qemu_run(
     sha256: str,
     stdin: str = Query(default=""),
+    strace: bool = Query(default=False),
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
 ) -> dict:
     """다른 아키텍처(ARM/MIPS 등) 바이너리를 qemu-user 로 실행해 stdout·종료코드 관측.
 
     네이티브 러너가 x86-64 전용이라 못 돌리는 크로스아키텍처 바이너리용. ``stdin`` 쿼리
-    문자열을 표준입력으로 흘린다. 신뢰할 수 없는 바이너리를 실행하므로 기본 비활성
-    (샌드박스 실행 게이트) — 503 가능. qemu 미설치 시 `qemu-<arch>-unavailable`.
+    문자열을 표준입력으로 흘린다. ``strace=true`` 면 시스템콜 트레이스도 반환한다.
+    신뢰할 수 없는 바이너리를 실행하므로 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    qemu 미설치 시 `qemu-<arch>-unavailable`.
     """
     data = repo.load_bytes(sha256)
-    return await run_in_threadpool(service.run_qemu, data, stdin_data=stdin.encode())
+    return await run_in_threadpool(
+        service.run_qemu, data, stdin_data=stdin.encode(), strace=strace
+    )
 
 
 @router.post("/{sha256}/explain-strategy")
