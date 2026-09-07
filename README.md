@@ -576,7 +576,10 @@ Pwnable_Lab/
 - Phase 6C: 패커/난독화 — **정적 탐지 구현**(`sandbox` 아님, 실행 없음): UPX 서명
   (섹션 이름·매직)·높은 엔트로피 실행 영역·비정상 섹션 테이블·적은 임포트·오버레이
   신호를 가중 합산해 확신도·패커 이름 판별(`analyzer.packing`, `GET
-  /binaries/{sha}/packing`). 후속: 실제 언패킹(`upx -d`)·런타임 strings
+  /binaries/{sha}/packing`). **런타임 strings**(`sandbox.runtime_strings`, `POST
+  /binaries/{sha}/runtime-strings`, opt-in): ptrace 디버거로 대상을 브레이크포인트/
+  N 스텝까지 실행한 뒤 쓰기 가능·익명 메모리를 훑어 **정적 strings 에 없는(런타임에
+  복호화된) 문자열**만 발굴. 후속: 실제 언패킹(`upx -d`, upx 필요)
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance
 - Phase 7: privacy-controlled LLM provider abstraction
 

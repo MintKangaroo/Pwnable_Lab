@@ -204,6 +204,61 @@ class DebugSession:
             words.append((rsp + i * _WORD, word & 0xFFFFFFFFFFFFFFFF))
         return words
 
+    @property
+    def pid(self) -> int:
+        """트레이시 프로세스 ID."""
+
+        return self._pid
+
+    def maps(self) -> list[dict]:
+        """읽기 가능한 메모리 매핑 목록(``/proc/<pid>/maps``).
+
+        각 항목은 ``{start, end, perms, path}``. 런타임 strings 처럼 실행 중 메모리를
+        훑는 도구가 사용한다. 트레이시가 없으면 빈 목록.
+        """
+
+        if not self._alive:
+            return []
+        regions: list[dict] = []
+        try:
+            with open(f"/proc/{self._pid}/maps") as fh:
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) < 5 or "r" not in parts[1]:
+                        continue
+                    start_s, _, end_s = parts[0].partition("-")
+                    path = parts[5] if len(parts) >= 6 else ""
+                    regions.append(
+                        {
+                            "start": int(start_s, 16),
+                            "end": int(end_s, 16),
+                            "perms": parts[1],
+                            "path": path,
+                        }
+                    )
+        except OSError:
+            return []
+        return regions
+
+    def read_region(self, start: int, size: int) -> bytes:
+        """``/proc/<pid>/mem`` 에서 한 번에 읽는다(정지 상태, PEEK 보다 빠름).
+
+        읽기 실패(권한 없는 영역 등)는 짧거나 빈 바이트로 반환한다.
+        """
+
+        if not self._alive or size <= 0:
+            return b""
+        try:
+            fd = os.open(f"/proc/{self._pid}/mem", os.O_RDONLY)
+        except OSError:
+            return b""
+        try:
+            return os.pread(fd, size, start)
+        except OSError:
+            return b""
+        finally:
+            os.close(fd)
+
     # --- 브레이크포인트 ----------------------------------------------------
 
     def set_breakpoint(self, addr: int) -> bool:

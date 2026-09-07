@@ -91,6 +91,7 @@ from pwnable_lab.sandbox import (
     require_isolation_marker,
     require_sandbox_enabled,
     run_debug_script,
+    runtime_strings,
     verify_exploit_in_container,
     verify_exploit_in_process,
 )
@@ -991,6 +992,35 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return run_debug_script(path, commands, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def runtime_strings(
+        self, data: bytes, *, breakpoint: int | None = None, steps: int = 0
+    ) -> dict:
+        """런타임 strings: 실행 중 메모리에서만 나타나는(복호화된) 문자열 발굴.
+
+        정적 strings 에 없는 런타임 전용 문자열을 골라 반환한다. 브레이크포인트
+        (절대 주소) 또는 N 스텝 뒤에 메모리를 훑는다. 신뢰할 수 없는 바이너리를
+        실행하므로 마스터 게이트+격리 마커를 강제한다(in-process). 기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Runtime strings")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return runtime_strings(
+                path, breakpoint=breakpoint, steps=steps, limits=limits
+            )
         finally:
             try:
                 os.unlink(path)
