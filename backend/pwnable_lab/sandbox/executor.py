@@ -192,6 +192,18 @@ def auto_fmt_leak_pie_in_container(data: bytes, *, settings: _ExecutorSettings) 
     return _run_container(settings, ["--stdin", "--auto-fmt-leak-pie"], data)
 
 
+def auto_fmt_got_overwrite_in_container(
+    data: bytes, *, settings: _ExecutorSettings
+) -> dict:
+    """일회용 컨테이너 안에서 포맷스트링 GOT 덮어쓰기 자동 익스(셸 증명까지)를 수행한다.
+
+    fmt 위치 확정·PTY 셸 증명이 실행 프로세스 안에서 일어나야 하므로 CLI
+    ``--auto-fmt-got-overwrite`` 로 위임한다(위치는 자체 확정, offset 불필요).
+    """
+
+    return _run_container(settings, ["--stdin", "--auto-fmt-got-overwrite"], data)
+
+
 def auto_ret2system32_in_container(
     data: bytes, *, offset: int, settings: _ExecutorSettings
 ) -> dict:

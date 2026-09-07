@@ -209,6 +209,14 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   계산→rebase 체인)로 셸을 증명(`aslr="defeated-via-inband-leak"`). 체인은 대상 재료에
   맞춰 자동 선택(win 有→ret2win, 無→**ret2system/execve** — win 없는 실전 PIE 포함).
   auto-exploit 이 단일 cyclic 확정에 실패한 PIE·amd64 에서 폴백으로 자동 시도
+- **포맷스트링 `%n` GOT 덮어쓰기(`auto-fmt-write`)**: 포맷스트링 **읽기**(leak)와 달리
+  `%n` **쓰기** 프리미티브로 임포트 함수의 GOT 슬롯을 `win` 주소로 덮어 제어를
+  탈취하는 고전 기법. fmt 인자 위치를 동적 probe(`AAAAAAAA%N$p`)로 자체 확정하고,
+  의존성 없이 `%hhn` 바이트 단위 쓰기 payload 를 구성(주소 목록은 지시자 뒤 8바이트
+  정렬). 임포트 GOT 후보를 모두 시도하되 **셸이 실제로 산술을 평가한 값**으로만 성공을
+  판정해(취약 루프의 입력 반사를 거짓 양성으로 오인하지 않음) 셸 획득을 증명. non-PIE
+  amd64 대상(GOT·win 이 절대주소). auto-exploit 이 오버플로가 없는 non-PIE·amd64 에서
+  폴백으로 자동 시도
 - **완성 pwntools 스크립트 생성(`exploit_script`)**: 비 PIE 절대주소 기법(ret2win /
   ret2system / execve / i386 ret2system)이 샌드박스에서 셸 증명되면, 확정 오프셋·주소로
   로컬 `process()` ↔ 원격 `remote(HOST,PORT)` 토글이 붙은 **바로 실행 가능한** pwntools
@@ -542,11 +550,12 @@ Pwnable_Lab/
   libc leak/ASLR 흐름과 자동 오프셋 정밀화는 후속
 - Phase 6 auto-exploit sandbox: **구현 완료(opt-in)** — network-disabled 일회용
   샌드박스에서 오프셋 자동 확정 후 ret2win/ret2system/execve/ret2libc, i386 ret2system,
-  PIE(ret2win/ret2system/execve)-pie, 포맷스트링 in-band leak 까지 셸 획득을 자동
-  증명. Ghidra 디컴파일 백엔드를 vuln_scan/strategy 에 피드백. 설계 노트:
+  PIE(ret2win/ret2system/execve)-pie(amd64·i386), 포맷스트링 in-band leak, 포맷스트링
+  `%n` GOT overwrite 까지 셸 획득을 자동 증명. Ghidra 디컴파일 백엔드를
+  vuln_scan/strategy 에 피드백. 설계 노트:
   [`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md),
-  [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 후속: 32-bit PIE·자동 포맷스트링
-  GOT overwrite·인터랙티브 원격 흐름
+  [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 후속: PIE 포맷스트링 GOT
+  overwrite·인터랙티브 원격 흐름
 - Phase 6B: GDB/MI와 WebSocket interactive debugger
 - Phase 6C: packing/UPX/obfuscation/runtime strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance

@@ -38,6 +38,7 @@ from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
     execve_plan,
     find_ret_gadget,
+    got_overwrite_targets,
     inject_confirmed_offset,
     is_pie,
     leak_plan,
@@ -65,6 +66,8 @@ from pwnable_lab.sandbox import (
     auto_execve_in_container,
     auto_execve_pie_core,
     auto_execve_pie_in_container,
+    auto_fmt_got_overwrite_core,
+    auto_fmt_got_overwrite_in_container,
     auto_fmt_leak_pie_core,
     auto_fmt_leak_pie_in_container,
     auto_ret2libc_core,
@@ -375,6 +378,22 @@ class AnalysisService:
                 fmt = self.auto_fmt_leak_pie(data)
                 if fmt.get("succeeded"):
                     verification = fmt
+
+        # 폴백2: non-PIE amd64 에서 스택 오버플로가 안 잡히면 포맷스트링 %n GOT
+        # 덮어쓰기를 시도한다. 오버플로가 아니라 ``printf(user_input)`` 포맷스트링
+        # 취약점을 노리는 별개 프리미티브이므로 오프셋 확정 실패와 무관하게 성립할 수
+        # 있다(win 리다이렉트 대상과 임포트 GOT 슬롯이 있어야 한다).
+        if not verification.get("succeeded"):
+            image = parse_elf(data)
+            if (
+                not is_pie(image)
+                and (image.bits or 64) == 64
+                and ret2win_target(image) is not None
+                and got_overwrite_targets(image)
+            ):
+                fmt_write = self.auto_fmt_got_overwrite(data)
+                if fmt_write.get("succeeded"):
+                    verification = fmt_write
 
         # 셸이 증명된 비 PIE 절대주소 기법은 확정 오프셋·주소로 완성된(원격 가능한)
         # pwntools 스크립트를 생성한다(PIE/fmt-leak 는 base leak 이 필요 → None).
@@ -837,6 +856,41 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_fmt_leak_pie_core(path, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def auto_fmt_got_overwrite(self, data: bytes) -> dict:
+        """포맷스트링 %n GOT 덮어쓰기 자동 익스: GOT → win 리다이렉트 → 셸 증명.
+
+        ``printf(user_input)`` 처럼 포맷 문자열을 제어할 수 있는 취약점을 노린다. fmt
+        인자 위치를 자체 확정하고, 임포트 함수 GOT 후보를 모두 시도해 셸이 뜨는 첫
+        조합을 채택한다. non-PIE amd64 대상(GOT·win 이 모두 절대주소). offset 불필요.
+
+        fmt 위치 확정·PTY 셸 증명이 실행 프로세스 안에서 일어나야 하므로 container
+        executor 는 컨테이너 안의 CLI(`--auto-fmt-got-overwrite`)로 위임한다.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Auto fmt-GOT-overwrite")
+        logger.warning(
+            "sandbox: auto fmt-GOT-overwrite (executor=%s)",
+            self.settings.sandbox_executor,
+        )
+        if self.settings.sandbox_executor == "container":
+            return auto_fmt_got_overwrite_in_container(data, settings=self.settings)
+
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_fmt_got_overwrite_core(path, limits=limits)
         finally:
             try:
                 os.unlink(path)
