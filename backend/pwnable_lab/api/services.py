@@ -34,6 +34,7 @@ from pwnable_lab.analyzer.ghidra_insights import (
     overflow_insights,
 )
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
+from pwnable_lab.analyzer.packing import detect_packing
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
     execve_plan,
@@ -297,6 +298,15 @@ class AnalysisService:
         if artifact_format is ArtifactFormat.PE:
             return pe_checksec(parse_pe(data))
         return raw_checksec()
+
+    def packing(self, data: bytes) -> dict:
+        """패커/난독화 정적 탐지(실행 없음). ELF 만 대상, 그 외는 unsupported."""
+
+        if detect_format(data) is not ArtifactFormat.ELF:
+            return {"format": "unsupported", "packed": False, "signals": []}
+        result = detect_packing(parse_elf(data)).as_dict()
+        result["format"] = "ELF"
+        return result
 
     def vulns(self, data: bytes) -> list[dict]:
         artifact_format = detect_format(data)

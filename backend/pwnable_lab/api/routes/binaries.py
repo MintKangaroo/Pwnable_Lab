@@ -218,6 +218,16 @@ def binary_vulns(
     return service.vulns(repo.load_bytes(sha256))
 
 
+@router.get("/{sha256}/packing")
+def binary_packing(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """패커/난독화 정적 탐지(실행 없음): UPX 서명·엔트로피·섹션·임포트·오버레이 신호."""
+    return service.packing(repo.load_bytes(sha256))
+
+
 @router.get("/{sha256}/strategy")
 def binary_strategy(
     sha256: str,
