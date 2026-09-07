@@ -13,6 +13,11 @@
    직접 연결하지 말 것(현재 기본적으로 연결돼 있지 않다).
 """
 
+from pwnable_lab.sandbox.debugger import (
+    DebugSession,
+    StopEvent,
+    run_debug_script,
+)
 from pwnable_lab.sandbox.executor import (
     auto_execve_in_container,
     auto_execve_pie_in_container,
@@ -70,11 +75,13 @@ from pwnable_lab.sandbox.runner import (
 
 __all__ = [
     "CrashObservation",
+    "DebugSession",
     "ExploitVerification",
     "OffsetConfirmation",
     "PieBaseResolution",
     "SandboxLimits",
     "ShellProof",
+    "StopEvent",
     "auto_execve_core",
     "auto_execve_in_container",
     "auto_execve_pie_core",
@@ -106,6 +113,7 @@ __all__ = [
     "require_isolation_marker",
     "require_sandbox_boundary",
     "require_sandbox_enabled",
+    "run_debug_script",
     "run_with_input",
     "verify_exploit_in_container",
     "verify_exploit_in_process",

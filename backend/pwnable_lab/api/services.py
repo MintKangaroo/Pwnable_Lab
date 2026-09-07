@@ -88,6 +88,7 @@ from pwnable_lab.sandbox import (
     confirm_offset_in_process,
     require_isolation_marker,
     require_sandbox_enabled,
+    run_debug_script,
     verify_exploit_in_container,
     verify_exploit_in_process,
 )
@@ -948,6 +949,37 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_fmt_got_overwrite_pie_core(path, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def debug_script(self, data: bytes, commands: list[dict]) -> dict:
+        """ptrace 대화형 디버그 세션에서 명령 목록을 실행하고 구조화 결과를 반환한다.
+
+        브레이크포인트·연속/스텝·레지스터/메모리/스택 조회·stdin 주입을 한 세션에서
+        순서대로 수행한다(GDB/MI 대체 — 외부 gdb 없이 자체 ptrace 러너 위에 구현).
+        주소는 절대 주소로 해석하며, PIE 는 먼저 ``base`` 명령으로 관측한 값을 더해
+        계산한다.
+
+        신뢰할 수 없는 바이너리를 **실행**하므로 마스터 게이트+격리 마커를 강제한다.
+        상태 있는 ptrace 세션은 콜백/스레드 고정이라 in-process 로만 수행한다(컨테이너
+        노출은 후속). 기본 비활성 — 503 가능.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Debug session")
+        logger.warning("sandbox: debug session (%d commands)", len(commands))
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return run_debug_script(path, commands, limits=limits)
         finally:
             try:
                 os.unlink(path)

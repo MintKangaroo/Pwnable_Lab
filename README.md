@@ -566,7 +566,10 @@ Pwnable_Lab/
   vuln_scan/strategy 에 피드백. 설계 노트:
   [`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md),
   [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 자동 익스 스토리 완성
-- Phase 6B: GDB/MI와 WebSocket interactive debugger
+- Phase 6B: 인터랙티브 디버거 — **ptrace 기반 디버그 세션 코어 구현(opt-in)**:
+  외부 gdb 없이 자체 ptrace 러너 위에 소프트웨어 브레이크포인트·연속/단일스텝·레지스터/
+  메모리/스택 조회·stdin 주입을 지속 세션으로 노출(`sandbox.debugger`, `POST
+  /binaries/{sha}/debug` 배치 스크립트). 후속: WebSocket 라이브 세션·프론트 디버거 UI
 - Phase 6C: packing/UPX/obfuscation/runtime strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance
 - Phase 7: privacy-controlled LLM provider abstraction

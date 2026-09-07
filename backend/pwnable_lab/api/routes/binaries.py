@@ -5,7 +5,16 @@ from __future__ import annotations
 import re
 from typing import Literal, cast
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 from starlette.concurrency import run_in_threadpool
 
 from pwnable_lab.analyzer.gadgets import GadgetFilter
@@ -313,6 +322,26 @@ async def binary_auto_fmt_write_pie(
     """
     data = repo.load_bytes(sha256)
     return await run_in_threadpool(service.auto_fmt_got_overwrite_pie, data)
+
+
+@router.post("/{sha256}/debug")
+async def binary_debug_script(
+    sha256: str,
+    commands: list[dict] = Body(
+        ..., embed=True, description="디버그 명령 목록(op 기반)"
+    ),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """ptrace 대화형 디버그 세션에서 명령 목록을 실행(GDB/MI 대체, 외부 gdb 불필요).
+
+    본문 예: ``{"commands": [{"op": "break", "addr": 4198774}, {"op": "continue"},
+    {"op": "registers"}]}``. 브레이크포인트·연속/스텝·레지스터/메모리/스택 조회·stdin
+    주입을 한 세션에서 순서대로 수행한다. 신뢰할 수 없는 바이너리를 실행하므로 기본
+    비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.debug_script, data, commands)
 
 
 @router.post("/{sha256}/leak")
