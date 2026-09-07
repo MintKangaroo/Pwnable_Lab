@@ -216,7 +216,15 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   정렬). 임포트 GOT 후보를 모두 시도하되 **셸이 실제로 산술을 평가한 값**으로만 성공을
   판정해(취약 루프의 입력 반사를 거짓 양성으로 오인하지 않음) 셸 획득을 증명. non-PIE
   amd64 대상(GOT·win 이 절대주소). auto-exploit 이 오버플로가 없는 non-PIE·amd64 에서
-  폴백으로 자동 시도
+  폴백으로 자동 시도. **Full RELRO 는 GOT 가 읽기 전용이라 %n 쓰기가 불가능**하므로
+  `full-relro-got-readonly` 로 정직하게 거부
+- **PIE 포맷스트링 `%n` GOT 덮어쓰기(`auto-fmt-write-pie`)**: PIE 는 GOT·win 이 base
+  상대라, 위 fmt-leak 과 같은 **진짜 in-band leak** 으로 로드 base 를 런타임 복원한 뒤
+  `{base+got_off: base+win_off}` 를 rebase 해 `%n` 으로 덮는다(ASLR 켜져도 성립,
+  `aslr="defeated-via-inband-leak"`). 포맷스트링이 **루프 안**에 있어야 leak·write 두
+  번의 printf 를 쓸 수 있고, write 처리 printf **직후 같은 반복에서 호출되는** 임포트
+  함수(예: 루프의 `fflush`) GOT 를 덮어야 셸이 뜬다 — 후보를 모두 시도. auto-exploit 이
+  PIE·amd64 에서 폴백으로 자동 시도(Full RELRO 는 동일하게 거부)
 - **완성 pwntools 스크립트 생성(`exploit_script`)**: 비 PIE 절대주소 기법(ret2win /
   ret2system / execve / i386 ret2system)이 샌드박스에서 셸 증명되면, 확정 오프셋·주소로
   로컬 `process()` ↔ 원격 `remote(HOST,PORT)` 토글이 붙은 **바로 실행 가능한** pwntools
@@ -551,11 +559,10 @@ Pwnable_Lab/
 - Phase 6 auto-exploit sandbox: **구현 완료(opt-in)** — network-disabled 일회용
   샌드박스에서 오프셋 자동 확정 후 ret2win/ret2system/execve/ret2libc, i386 ret2system,
   PIE(ret2win/ret2system/execve)-pie(amd64·i386), 포맷스트링 in-band leak, 포맷스트링
-  `%n` GOT overwrite 까지 셸 획득을 자동 증명. Ghidra 디컴파일 백엔드를
+  `%n` GOT overwrite(non-PIE·PIE) 까지 셸 획득을 자동 증명. Ghidra 디컴파일 백엔드를
   vuln_scan/strategy 에 피드백. 설계 노트:
   [`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md),
-  [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 후속: PIE 포맷스트링 GOT
-  overwrite·인터랙티브 원격 흐름
+  [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 후속: 인터랙티브 원격 흐름
 - Phase 6B: GDB/MI와 WebSocket interactive debugger
 - Phase 6C: packing/UPX/obfuscation/runtime strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance

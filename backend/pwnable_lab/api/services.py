@@ -68,6 +68,8 @@ from pwnable_lab.sandbox import (
     auto_execve_pie_in_container,
     auto_fmt_got_overwrite_core,
     auto_fmt_got_overwrite_in_container,
+    auto_fmt_got_overwrite_pie_core,
+    auto_fmt_got_overwrite_pie_in_container,
     auto_fmt_leak_pie_core,
     auto_fmt_leak_pie_in_container,
     auto_ret2libc_core,
@@ -394,6 +396,22 @@ class AnalysisService:
                 fmt_write = self.auto_fmt_got_overwrite(data)
                 if fmt_write.get("succeeded"):
                     verification = fmt_write
+
+        # 폴백3: PIE amd64 에서 위 fmt-leak(overflow 기반)도 실패하면 포맷스트링 %n
+        # GOT 덮어쓰기를 시도한다. 대상이 흘리는 포맷스트링으로 base 를 복원해 rebase
+        # 한 GOT 를 win 으로 덮는 진짜 in-band leak(ASLR 켜져도 성립). Full RELRO 는
+        # 코어가 거부한다.
+        if not verification.get("succeeded"):
+            image = parse_elf(data)
+            if (
+                is_pie(image)
+                and (image.bits or 64) == 64
+                and ret2win_target(image) is not None
+                and got_overwrite_targets(image)
+            ):
+                fmt_write_pie = self.auto_fmt_got_overwrite_pie(data)
+                if fmt_write_pie.get("succeeded"):
+                    verification = fmt_write_pie
 
         # 셸이 증명된 비 PIE 절대주소 기법은 확정 오프셋·주소로 완성된(원격 가능한)
         # pwntools 스크립트를 생성한다(PIE/fmt-leak 는 base leak 이 필요 → None).
@@ -891,6 +909,45 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_fmt_got_overwrite_core(path, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def auto_fmt_got_overwrite_pie(self, data: bytes) -> dict:
+        """PIE 포맷스트링 %n GOT 덮어쓰기: base in-band leak → rebase → 셸 증명.
+
+        non-PIE 판과 달리 GOT·win 이 base 상대라, 대상이 흘리는 포맷스트링으로 로드
+        base 를 런타임 복원한 뒤(ASLR 켜져도 성립하는 진짜 leak) rebase 한 GOT 를 win
+        으로 덮는다. 포맷스트링이 루프 안에 있어야 leak·write 두 번의 printf 를 쓸 수
+        있다. base leak·fmt 위치를 자체 확정하므로 offset 불필요.
+
+        Full RELRO 는 GOT 를 읽기 전용으로 만들어 %n 쓰기가 불가능하므로 코어가
+        `full-relro-got-readonly` 로 거부한다. base leak·PTY 셸 증명이 실행 프로세스
+        안에서 일어나야 하므로 container 는 CLI(`--auto-fmt-got-overwrite-pie`)로 위임.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(
+            data, ArtifactFormat.ELF, feature="Auto fmt-GOT-overwrite PIE"
+        )
+        logger.warning(
+            "sandbox: auto fmt-GOT-overwrite PIE (executor=%s)",
+            self.settings.sandbox_executor,
+        )
+        if self.settings.sandbox_executor == "container":
+            return auto_fmt_got_overwrite_pie_in_container(data, settings=self.settings)
+
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_fmt_got_overwrite_pie_core(path, limits=limits)
         finally:
             try:
                 os.unlink(path)
