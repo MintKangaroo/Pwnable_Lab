@@ -14,7 +14,10 @@ from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.payload.pack import build_fmtstr_write, p64
 from pwnable_lab.sandbox import SandboxLimits
-from pwnable_lab.sandbox.fmtwrite import auto_fmt_got_overwrite
+from pwnable_lab.sandbox.fmtwrite import (
+    auto_fmt_got_overwrite,
+    auto_fmt_got_overwrite_pie,
+)
 
 _SUPPORTED = platform.system() == "Linux" and platform.machine() in {"x86_64", "AMD64"}
 _HAVE_GCC = shutil.which("gcc") is not None
@@ -60,11 +63,16 @@ _gated = pytest.mark.skipif(
 )
 
 
-def _compile(tmp_path, src: str, name: str, *, pie: bool = False) -> str:
+def _compile(
+    tmp_path, src: str, name: str, *, pie: bool = False, norelro: bool = False
+) -> str:
     csrc = tmp_path / f"{name}.c"
     csrc.write_text(src)
     out = tmp_path / name
     flags = ["-fno-stack-protector", "-pie" if pie else "-no-pie"]
+    # GOT 덮어쓰기는 GOT 가 쓰기 가능해야 하므로 Full RELRO 를 끈다(취약 CTF 관용).
+    if norelro:
+        flags.append("-Wl,-z,norelro")
     subprocess.run(
         ["gcc", *flags, "-o", str(out), str(csrc)],
         check=True,
@@ -162,5 +170,56 @@ def test_auto_exploit_falls_back_to_fmt_got_overwrite(tmp_path):
     v = result["verification"]
     # 오버플로가 없으므로 오프셋 확정은 실패하고, 포맷스트링 GOT 덮어쓰기로 폴백한다.
     assert v["technique"] == "fmt-got-overwrite"
+    assert v["succeeded"] is True
+    assert v["shell_proven"] is True
+
+
+# --- PIE: base in-band leak → rebase GOT 덮어쓰기 -----------------------------
+
+
+@_gated
+def test_auto_fmt_got_overwrite_pie_proves_shell(tmp_path):
+    # 부분 RELRO PIE(취약 CTF 관용): GOT 가 쓰기 가능.
+    path = _compile(tmp_path, _FMT_SRC, "fmt_pie", pie=True, norelro=True)
+    res = auto_fmt_got_overwrite_pie(path, limits=SandboxLimits())
+    assert res["attempted"] is True
+    assert res["technique"] == "fmt-got-overwrite-pie"
+    assert res["succeeded"] is True
+    assert res["shell_proven"] is True
+    assert res["target_name"] == "win"
+    # base 를 유출값에서 계산하므로 진짜 in-band leak(ASLR 켜져도 성립).
+    assert res["aslr"] == "defeated-via-inband-leak"
+    assert res["base_hex"] is not None
+    proof = res["shell_proof"]
+    assert proof["shell_spawned"] is True
+    assert proof["marker"] in proof["output"]
+
+
+@_gated
+def test_pie_full_relro_is_rejected(tmp_path):
+    # 기본 -pie 는 Full RELRO(BIND_NOW) → GOT 읽기전용 → %n 쓰기 불가.
+    path = _compile(tmp_path, _FMT_SRC, "fmt_pie_full", pie=True)
+    res = auto_fmt_got_overwrite_pie(path, limits=SandboxLimits())
+    assert res["attempted"] is False
+    assert res["reason"] == "full-relro-got-readonly"
+
+
+@_gated
+def test_non_pie_binary_rejected_by_pie_core(tmp_path):
+    path = _compile(tmp_path, _FMT_SRC, "fmt_target", norelro=True)
+    res = auto_fmt_got_overwrite_pie(path, limits=SandboxLimits())
+    assert res["attempted"] is False
+    assert res["reason"] == "not-pie"
+
+
+@_gated
+def test_auto_exploit_falls_back_to_fmt_got_overwrite_pie(tmp_path):
+    path = _compile(tmp_path, _FMT_SRC, "fmt_pie", pie=True, norelro=True)
+    service = AnalysisService(
+        Settings(sandbox_execution_enabled=True, sandbox_executor="inprocess")
+    )
+    result = service.auto_exploit(open(path, "rb").read(), pattern_length=400)
+    v = result["verification"]
+    assert v["technique"] == "fmt-got-overwrite-pie"
     assert v["succeeded"] is True
     assert v["shell_proven"] is True

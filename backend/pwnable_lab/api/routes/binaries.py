@@ -299,6 +299,22 @@ async def binary_auto_fmt_write(
     return await run_in_threadpool(service.auto_fmt_got_overwrite, data)
 
 
+@router.post("/{sha256}/auto-fmt-write-pie")
+async def binary_auto_fmt_write_pie(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """PIE 포맷스트링 %n GOT 덮어쓰기: base in-band leak → rebase → 셸 증명.
+
+    대상이 흘리는 포맷스트링으로 로드 base 를 런타임 복원해 rebase 한 GOT 를 win 으로
+    덮는다(ASLR 켜져도 성립하는 진짜 leak). 포맷스트링이 루프 안에 있어야 하며 Full
+    RELRO 는 거부(non-PIE amd64, offset 불필요). 기본 비활성 — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.auto_fmt_got_overwrite_pie, data)
+
+
 @router.post("/{sha256}/leak")
 async def binary_leak(
     sha256: str,

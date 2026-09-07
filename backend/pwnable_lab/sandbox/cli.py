@@ -36,6 +36,7 @@ from pwnable_lab.sandbox import (
     auto_execve_core,
     auto_execve_pie_core,
     auto_fmt_got_overwrite_core,
+    auto_fmt_got_overwrite_pie_core,
     auto_fmt_leak_pie_core,
     auto_ret2libc_core,
     auto_ret2system32_core,
@@ -113,6 +114,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="auto_fmt_got_overwrite",
         help="포맷스트링 %n GOT 덮어쓰기(위치 자체 확정→win 리다이렉트→셸). --offset 불필요.",
+    )
+    parser.add_argument(
+        "--auto-fmt-got-overwrite-pie",
+        action="store_true",
+        dest="auto_fmt_got_overwrite_pie",
+        help="PIE 포맷스트링 %n GOT 덮어쓰기(base in-band leak→rebase→셸). --offset 불필요.",
     )
     parser.add_argument(
         "--auto-execve-pie",
@@ -277,6 +284,10 @@ def main(argv: list[str] | None = None) -> int:
             # fmt 위치를 자체 확정하므로 --offset 불필요.
             print("[sandbox-cli] auto_fmt_got_overwrite 실행", file=sys.stderr)
             output = auto_fmt_got_overwrite_core(binary_path, limits=limits)
+        elif args.auto_fmt_got_overwrite_pie:
+            # base leak·fmt 위치를 자체 확정하므로 --offset 불필요.
+            print("[sandbox-cli] auto_fmt_got_overwrite_pie 실행", file=sys.stderr)
+            output = auto_fmt_got_overwrite_pie_core(binary_path, limits=limits)
         elif args.auto_execve_pie:
             if args.offset is None:
                 print(
