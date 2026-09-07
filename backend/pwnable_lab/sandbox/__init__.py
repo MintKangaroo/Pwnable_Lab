@@ -53,6 +53,7 @@ from pwnable_lab.sandbox.oep import find_oep_candidate
 from pwnable_lab.sandbox.pie import auto_execve_pie as auto_execve_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2system_pie as auto_ret2system_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2win_pie as auto_ret2win_pie_core
+from pwnable_lab.sandbox.qemu import run_under_qemu
 from pwnable_lab.sandbox.ret2libc import auto_ret2libc as auto_ret2libc_core
 from pwnable_lab.sandbox.ret2system import auto_ret2system as auto_ret2system_core
 from pwnable_lab.sandbox.ret2system32 import auto_ret2system32 as auto_ret2system32_core
@@ -122,6 +123,7 @@ __all__ = [
     "require_sandbox_boundary",
     "require_sandbox_enabled",
     "run_debug_script",
+    "run_under_qemu",
     "run_with_input",
     "runtime_strings",
     "unpack_upx",

@@ -94,6 +94,7 @@ from pwnable_lab.sandbox import (
     require_isolation_marker,
     require_sandbox_enabled,
     run_debug_script,
+    run_under_qemu,
     runtime_strings,
     unpack_upx,
     verify_exploit_in_container,
@@ -1123,6 +1124,32 @@ class AnalysisService:
             return execution_trace(
                 path, start=start, max_steps=max_steps, limits=limits
             )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def run_qemu(self, data: bytes, *, stdin_data: bytes = b"") -> dict:
+        """다른 아키텍처(ARM/MIPS 등) 바이너리를 qemu-user 로 실행해 관측한다.
+
+        네이티브 러너가 x86-64 전용이라 못 돌리는 크로스아키텍처 바이너리를 위한
+        경로. 신뢰할 수 없는 바이너리를 **실행**하므로 마스터 게이트+격리 마커를
+        강제한다(in-process). qemu 미설치 시 결과에 `qemu-<arch>-unavailable`.
+        기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="QEMU run")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return run_under_qemu(path, stdin_data=stdin_data, limits=limits)
         finally:
             try:
                 os.unlink(path)
