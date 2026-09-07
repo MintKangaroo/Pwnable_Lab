@@ -15,6 +15,7 @@
 
 from pwnable_lab.sandbox.debugger import (
     DebugSession,
+    DebugWorker,
     StopEvent,
     run_debug_script,
 )
@@ -76,6 +77,7 @@ from pwnable_lab.sandbox.runner import (
 __all__ = [
     "CrashObservation",
     "DebugSession",
+    "DebugWorker",
     "ExploitVerification",
     "OffsetConfirmation",
     "PieBaseResolution",

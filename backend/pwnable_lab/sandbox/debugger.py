@@ -429,6 +429,7 @@ _SCRIPT_OPS = {
     "read",
     "stack",
     "input",
+    "output",
 }
 
 
@@ -504,6 +505,8 @@ def _run_one(session: DebugSession, op: str, cmd: dict) -> dict:
     if op == "stack":
         words = session.stack(cmd.get("count"))
         return {"op": op, "words": [[f"0x{a:x}", f"0x{v:x}"] for a, v in words]}
+    if op == "output":
+        return {"op": op, "output": session.read_output().decode("utf-8", "replace")}
     # op == "input"
     session.send_input(str(cmd.get("data", "")).encode())
     return {"op": op, "sent": True}
@@ -513,4 +516,86 @@ def _hx(value: int) -> str:
     return f"0x{int(value):x}"
 
 
-__all__ = ["DebugSession", "StopEvent", "run_debug_script"]
+class DebugWorker:
+    """:class:`DebugSession` 을 **전용 스레드**에 태워 명령을 큐로 중계하는 래퍼.
+
+    ptrace 는 트레이서 스레드에 고정되므로 세션의 모든 조작은 세션을 생성한 스레드
+    하나에서만 해야 한다. WebSocket 핸들러는 async 이벤트 루프에서 도니, 세션을 이
+    워커 스레드가 소유하게 하고 명령/결과를 :class:`queue.Queue` 로 주고받는다.
+
+    ``ready`` 는 세션 생성 결과(``{"event": "ready"}`` 또는 ``{"event": "error",
+    "error": ...}``)다. ``execute(cmd)`` 는 명령 하나를 워커 스레드에서 실행하고
+    결과 dict 를 돌려준다. ``close`` 는 세션을 정리하고 스레드를 join 한다.
+    ``cleanup_path`` 가 주어지면 종료 시 그 임시 파일을 지운다.
+    """
+
+    def __init__(
+        self,
+        binary_path: str,
+        *,
+        limits: SandboxLimits | None = None,
+        disable_aslr: bool = True,
+        cleanup_path: str | None = None,
+    ) -> None:
+        import queue
+        import threading
+
+        self._cmd_q: queue.Queue = queue.Queue()
+        self._res_q: queue.Queue = queue.Queue()
+        self._cleanup_path = cleanup_path
+        self._closed = False
+        self._thread = threading.Thread(
+            target=self._run,
+            args=(binary_path, limits or SandboxLimits(), disable_aslr),
+            daemon=True,
+        )
+        self._thread.start()
+        self.ready: dict = self._res_q.get()
+
+    def _run(self, binary_path: str, limits: SandboxLimits, disable_aslr: bool) -> None:
+        try:
+            session = DebugSession(
+                binary_path, limits=limits, disable_aslr=disable_aslr
+            )
+        except Exception as exc:  # 세션 생성 실패도 결과로 보고.
+            self._res_q.put({"event": "error", "error": str(exc)})
+            return
+        self._res_q.put({"event": "ready"})
+        try:
+            while True:
+                cmd = self._cmd_q.get()
+                if cmd is None or cmd.get("op") == "close":
+                    break
+                op = cmd.get("op")
+                if op not in _SCRIPT_OPS:
+                    self._res_q.put({"op": op, "error": "unknown-op"})
+                    continue
+                try:
+                    self._res_q.put(_run_one(session, op, cmd))
+                except Exception as exc:  # 개별 명령 오류는 세션을 죽이지 않는다.
+                    self._res_q.put({"op": op, "error": str(exc)})
+        finally:
+            session.close()
+            self._res_q.put({"event": "closed"})
+
+    def execute(self, cmd: dict) -> dict:
+        if self._closed:
+            return {"event": "closed"}
+        self._cmd_q.put(cmd)
+        result: dict = self._res_q.get()
+        return result
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._cmd_q.put(None)
+        self._thread.join(timeout=10.0)
+        if self._cleanup_path:
+            try:
+                os.unlink(self._cleanup_path)
+            except OSError:
+                pass
+
+
+__all__ = ["DebugSession", "DebugWorker", "StopEvent", "run_debug_script"]

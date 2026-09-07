@@ -61,6 +61,7 @@ from pwnable_lab.pe.analyzer import (
 )
 from pwnable_lab.pe.parser import parse_pe
 from pwnable_lab.sandbox import (
+    DebugWorker,
     SandboxLimits,
     auto_execve_core,
     auto_execve_in_container,
@@ -985,6 +986,26 @@ class AnalysisService:
                 os.unlink(path)
             except OSError:
                 pass
+
+    def open_debug_worker(self, data: bytes) -> DebugWorker:
+        """게이트를 통과시킨 뒤 라이브 디버그 세션 워커를 연다(WebSocket 용).
+
+        :meth:`debug_script` 의 배치 형태와 달리 세션을 살려 둔 채 명령을 하나씩
+        중계할 수 있게 :class:`DebugWorker`(전용 스레드)를 반환한다. 워커가 임시
+        바이너리 파일 소유권을 갖고 ``close`` 시 지운다. 신뢰할 수 없는 바이너리를
+        실행하므로 마스터 게이트+격리 마커를 강제한다.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Debug session")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        return DebugWorker(path, limits=limits, cleanup_path=path)
 
     @staticmethod
     def _materialize(data: bytes) -> str:
