@@ -12,7 +12,7 @@ from pwnable_lab.api.services import AnalysisService
 from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.sandbox import SandboxLimits
-from pwnable_lab.sandbox.debugger import DebugSession, run_debug_script
+from pwnable_lab.sandbox.debugger import DebugSession, DebugWorker, run_debug_script
 
 _SUPPORTED = platform.system() == "Linux" and platform.machine() in {"x86_64", "AMD64"}
 _HAVE_GCC = shutil.which("gcc") is not None
@@ -134,6 +134,7 @@ def test_run_debug_script_batch(tmp_path):
             {"op": "read", "addr": add, "length": 4},
             {"op": "input", "data": "AAAA\n"},
             {"op": "continue"},
+            {"op": "output"},
             {"op": "bogus"},
         ],
     )
@@ -145,15 +146,17 @@ def test_run_debug_script_batch(tmp_path):
         "read",
         "input",
         "continue",
+        "output",
         "bogus",
     ]
+    assert "hi\n" in result["steps"][6]["output"]
     cont1 = result["steps"][1]
     assert cont1["reason"] == "breakpoint"
     regs = result["steps"][2]["registers"]
     assert regs["rdi"] == "0x3" and regs["rsi"] == "0x4"
     assert result["steps"][3]["hex"][:2] != "cc"  # 브레이크포인트 마스킹
     assert result["steps"][5]["reason"] == "exited"
-    assert result["steps"][6]["error"] == "unknown-op"
+    assert result["steps"][7]["error"] == "unknown-op"
     assert "hi\n" in result["output"]
     assert result["alive"] is False
 
@@ -246,6 +249,60 @@ def test_registers_after_exit_raises(tmp_path):
         # 종료된 세션에 브레이크포인트/입력은 무해하게 무시된다.
         assert s.set_breakpoint(0x401176) is False
         s.send_input(b"x")  # 예외 없이 무시.
+
+
+@_gated
+def test_debug_worker_relays_commands_on_dedicated_thread(tmp_path):
+    path = _compile(tmp_path)
+    add = _sym(path, "add")
+    worker = DebugWorker(path, limits=SandboxLimits())
+    try:
+        assert worker.ready["event"] == "ready"
+        assert worker.execute({"op": "break", "addr": add})["ok"] is True
+        assert worker.execute({"op": "continue"})["reason"] == "breakpoint"
+        regs = worker.execute({"op": "registers"})["registers"]
+        assert regs["rdi"] == "0x3"
+        assert worker.execute({"op": "bogus"})["error"] == "unknown-op"
+        worker.execute({"op": "input", "data": "AAAA\n"})
+        assert worker.execute({"op": "continue"})["reason"] == "exited"
+    finally:
+        worker.close()
+    # 종료 후 execute 는 무해하게 closed 를 반환한다.
+    assert worker.execute({"op": "registers"})["event"] == "closed"
+
+
+@_gated
+def test_debug_worker_reports_session_error(tmp_path):
+    worker = DebugWorker(str(tmp_path / "nope"), limits=SandboxLimits())
+    try:
+        assert worker.ready["event"] == "error"
+    finally:
+        worker.close()
+
+
+@_gated
+def test_debug_session_edge_cases(tmp_path):
+    from pwnable_lab.errors import SandboxError
+
+    path = _compile(tmp_path)
+    add = _sym(path, "add")
+    s = DebugSession(path)
+    try:
+        # 메모리 읽기 경계: 0 바이트 → 빈 결과, 음수 → 예외.
+        assert s.read_memory(add, 0) == b""
+        with pytest.raises(SandboxError):
+            s.read_memory(add, -1)
+        # 같은 주소에 두 번 브레이크포인트 → 두 번째도 True(멱등).
+        assert s.set_breakpoint(add) is True
+        assert s.set_breakpoint(add) is True
+        s.cont()
+        assert s.read_memory(add, 2)  # 유효 메모리(브레이크포인트 마스킹 경로).
+    finally:
+        s.close()
+    # 종료 후: base 는 None, send_input 은 무해, 재종료도 안전(멱등).
+    assert s.base() is None
+    s.send_input(b"x")
+    s.close()
 
 
 def test_debug_session_missing_binary(tmp_path):

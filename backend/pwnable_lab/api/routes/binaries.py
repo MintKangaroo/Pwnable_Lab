@@ -13,6 +13,8 @@ from fastapi import (
     Query,
     Response,
     UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
     status,
 )
 from starlette.concurrency import run_in_threadpool
@@ -342,6 +344,54 @@ async def binary_debug_script(
     """
     data = repo.load_bytes(sha256)
     return await run_in_threadpool(service.debug_script, data, commands)
+
+
+@router.websocket("/{sha256}/debug/ws")
+async def binary_debug_ws(
+    websocket: WebSocket,
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> None:
+    """ptrace 라이브 디버그 세션(WebSocket) — 명령/결과를 프레임 단위로 중계.
+
+    클라이언트가 ``{"op": "break", "addr": ...}`` 같은 JSON 을 보내면 세션 스레드에서
+    실행해 결과 JSON 을 돌려준다(``op`` 는 배치 ``/debug`` 와 동일 + ``output``).
+    연결 시 ``{"event": "ready"}`` 또는 게이트/세션 오류 프레임을 보낸다. 신뢰할 수
+    없는 바이너리를 실행하므로 기본 비활성(게이트 미통과 시 오류 프레임 후 종료).
+    """
+
+    await websocket.accept()
+    try:
+        data = repo.load_bytes(sha256)
+        worker = await run_in_threadpool(service.open_debug_worker, data)
+    except Exception as exc:  # 게이트/포맷/로드 오류 → 오류 프레임 후 종료.
+        await websocket.send_json({"event": "error", "error": str(exc)})
+        await websocket.close()
+        return
+
+    if worker.ready.get("event") != "ready":
+        await websocket.send_json(worker.ready)
+        await run_in_threadpool(worker.close)
+        await websocket.close()
+        return
+
+    await websocket.send_json({"event": "ready"})
+    try:
+        while True:
+            cmd = await websocket.receive_json()
+            if not isinstance(cmd, dict) or cmd.get("op") == "close":
+                break
+            result = await run_in_threadpool(worker.execute, cmd)
+            await websocket.send_json(result)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await run_in_threadpool(worker.close)
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 
 @router.post("/{sha256}/leak")
