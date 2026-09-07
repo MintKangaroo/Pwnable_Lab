@@ -573,7 +573,10 @@ Pwnable_Lab/
   명령/결과 프레임 중계 — ptrace 트레이서 스레드 고정을 전용 워커 스레드로 처리) 모두
   지원. 프론트 Exploit Runner 에 Debugger 카드(브레이크포인트→레지스터/스택/출력,
   배치 `/debug` 사용) 노출
-- Phase 6C: packing/UPX/obfuscation/runtime strings
+- Phase 6C: 패커/난독화 — **정적 탐지 구현**(`sandbox` 아님, 실행 없음): UPX 서명
+  (섹션 이름·매직)·높은 엔트로피 실행 영역·비정상 섹션 테이블·적은 임포트·오버레이
+  신호를 가중 합산해 확신도·패커 이름 판별(`analyzer.packing`, `GET
+  /binaries/{sha}/packing`). 후속: 실제 언패킹(`upx -d`)·런타임 strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance
 - Phase 7: privacy-controlled LLM provider abstraction
 
