@@ -1165,13 +1165,15 @@ class AnalysisService:
             except OSError:
                 pass
 
-    def run_qemu(self, data: bytes, *, stdin_data: bytes = b"") -> dict:
+    def run_qemu(
+        self, data: bytes, *, stdin_data: bytes = b"", strace: bool = False
+    ) -> dict:
         """다른 아키텍처(ARM/MIPS 등) 바이너리를 qemu-user 로 실행해 관측한다.
 
         네이티브 러너가 x86-64 전용이라 못 돌리는 크로스아키텍처 바이너리를 위한
-        경로. 신뢰할 수 없는 바이너리를 **실행**하므로 마스터 게이트+격리 마커를
-        강제한다(in-process). qemu 미설치 시 결과에 `qemu-<arch>-unavailable`.
-        기본 비활성 — 503.
+        경로. ``strace=True`` 면 시스템콜 트레이스를 함께 반환한다. 신뢰할 수 없는
+        바이너리를 **실행**하므로 마스터 게이트+격리 마커를 강제한다(in-process).
+        qemu 미설치 시 결과에 `qemu-<arch>-unavailable`. 기본 비활성 — 503.
         """
 
         require_sandbox_enabled(self.settings)
@@ -1184,7 +1186,9 @@ class AnalysisService:
         )
         path = self._materialize(data)
         try:
-            return run_under_qemu(path, stdin_data=stdin_data, limits=limits)
+            return run_under_qemu(
+                path, stdin_data=stdin_data, strace=strace, limits=limits
+            )
         finally:
             try:
                 os.unlink(path)
