@@ -571,7 +571,8 @@ Pwnable_Lab/
   스택 조회·stdin 주입을 지속 세션으로 노출(`sandbox.debugger`). **배치**(`POST
   /binaries/{sha}/debug`)와 **WebSocket 라이브 세션**(`/binaries/{sha}/debug/ws`,
   명령/결과 프레임 중계 — ptrace 트레이서 스레드 고정을 전용 워커 스레드로 처리) 모두
-  지원. 후속: 프론트 디버거 UI
+  지원. 프론트 Exploit Runner 에 Debugger 카드(브레이크포인트→레지스터/스택/출력,
+  배치 `/debug` 사용) 노출
 - Phase 6C: packing/UPX/obfuscation/runtime strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance
 - Phase 7: privacy-controlled LLM provider abstraction

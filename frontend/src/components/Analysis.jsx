@@ -2081,6 +2081,99 @@ function RunnerResult({ state }) {
   return null;
 }
 
+// ptrace 디버그 세션(배치 /debug): 브레이크포인트→continue→레지스터/스택/출력.
+const _DBG_KEY_REGS = ['rip', 'rsp', 'rbp', 'rdi', 'rsi', 'rdx', 'rcx', 'rax'];
+
+function DebuggerCard({ sha }) {
+  const [addr, setAddr] = useState('');
+  const [state, run] = useSandboxAction((commands) => api.debugScript(sha, commands));
+
+  const parsed = addr.trim() ? Number.parseInt(addr.trim(), 16) : NaN;
+  const valid = Number.isFinite(parsed) && parsed > 0;
+
+  const onRun = () => {
+    const commands = [];
+    if (valid) commands.push({ op: 'break', addr: parsed });
+    commands.push({ op: 'continue' });
+    commands.push({ op: 'registers' });
+    commands.push({ op: 'stack', count: 6 });
+    commands.push({ op: 'output' });
+    run(commands);
+  };
+
+  const steps = state.result?.steps || [];
+  const cont = steps.find((s) => s.op === 'continue');
+  const regs = steps.find((s) => s.op === 'registers')?.registers || {};
+  const stackWords = steps.find((s) => s.op === 'stack')?.words || [];
+  const output = steps.find((s) => s.op === 'output')?.output || '';
+
+  return (
+    <section className="runner-card">
+      <div className="section-heading">
+        <h3>Debugger (ptrace)</h3>
+        <span>브레이크포인트 · 레지스터 · 스택 (외부 gdb 불필요)</span>
+      </div>
+      <div className="runner-actions">
+        <label className="runner-field">
+          breakpoint (hex, 선택)
+          <input
+            placeholder="0x401176"
+            value={addr}
+            onChange={(e) => setAddr(e.target.value)}
+          />
+        </label>
+        <button
+          className="button secondary"
+          disabled={state.status === 'running'}
+          onClick={onRun}
+        >
+          {valid ? '브레이크포인트까지 실행' : '종료까지 실행'}
+        </button>
+      </div>
+      <RunnerResult state={state} />
+      {state.status === 'done' && (
+        <div>
+          <p className="runner-kv">
+            <span>stop</span>
+            <strong>
+              {cont ? (
+                <>
+                  {String(cont.reason)}
+                  {cont.rip ? ` @ ${String(cont.rip)}` : ''}
+                  {cont.exit_code != null ? ` (exit ${cont.exit_code})` : ''}
+                </>
+              ) : (
+                'n/a'
+              )}
+            </strong>
+          </p>
+          {Object.keys(regs).length > 0 && (
+            <div className="dbg-regs">
+              {_DBG_KEY_REGS
+                .filter((r) => regs[r] !== undefined)
+                .map((r) => (
+                  <span key={r} className="dbg-reg">
+                    <b>{r}</b> {String(regs[r])}
+                  </span>
+                ))}
+            </div>
+          )}
+          {stackWords.length > 0 && (
+            <pre className="dbg-stack">
+              <code>{stackWords.map(([a, v]) => `${a}: ${v}`).join('\n')}</code>
+            </pre>
+          )}
+          {output && (
+            <pre className="shell-term">
+              <code>{output}</code>
+            </pre>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ExploitRunner({ sha }) {
   const [patternLength, setPatternLength] = useState('');
   const [offset, setOffset] = useState('');
@@ -2321,6 +2414,9 @@ function ExploitRunner({ sha }) {
           </div>
         </div>
       </section>
+
+      {/* ptrace 디버거 */}
+      <DebuggerCard sha={sha} />
 
       {/* 수동 verify-exploit */}
       <section className="runner-card">
