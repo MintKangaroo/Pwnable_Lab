@@ -302,6 +302,31 @@ async def binary_trace(
     )
 
 
+@router.post("/{sha256}/memdump")
+async def binary_memdump(
+    sha256: str,
+    breakpoint: int | None = Query(default=None, ge=0, le=0xFFFFFFFFFFFF),
+    steps: int = Query(default=0, ge=0, le=1_000_000),
+    select: str = Query(default="writable", pattern="^(writable|code|all)$"),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """프로세스 메모리 스냅샷: 지정 시점의 매핑 영역 바이트·엔트로피·해시 덤프.
+
+    언패킹·복호화된 프로세스 이미지를 재구성하는 데 쓴다. ``select`` 는 writable
+    (기본, 쓰기 가능·익명)/code(실행 가능)/all. 브레이크포인트 또는 N 스텝 뒤에 뜬다.
+    신뢰할 수 없는 바이너리를 실행하므로 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.dump_memory,
+        data,
+        breakpoint=breakpoint,
+        steps=steps,
+        select=select,
+    )
+
+
 @router.post("/{sha256}/qemu-run")
 async def binary_qemu_run(
     sha256: str,
