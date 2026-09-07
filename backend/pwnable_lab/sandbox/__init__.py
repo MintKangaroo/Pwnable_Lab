@@ -73,6 +73,7 @@ from pwnable_lab.sandbox.runner import (
     verify_payload,
     verify_shell,
 )
+from pwnable_lab.sandbox.runtime_strings import runtime_strings
 
 __all__ = [
     "CrashObservation",
@@ -117,6 +118,7 @@ __all__ = [
     "require_sandbox_enabled",
     "run_debug_script",
     "run_with_input",
+    "runtime_strings",
     "verify_exploit_in_container",
     "verify_exploit_in_process",
     "verify_payload",

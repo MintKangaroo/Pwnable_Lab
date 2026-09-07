@@ -228,6 +228,26 @@ def binary_packing(
     return service.packing(repo.load_bytes(sha256))
 
 
+@router.post("/{sha256}/runtime-strings")
+async def binary_runtime_strings(
+    sha256: str,
+    breakpoint: int | None = Query(default=None, ge=0, le=0xFFFFFFFFFFFF),
+    steps: int = Query(default=0, ge=0, le=1_000_000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """런타임 strings: 실행 중 메모리에서만 나타나는(복호화된) 문자열 발굴.
+
+    브레이크포인트(절대 주소) 또는 N 스텝 뒤에 쓰기 가능/익명 메모리를 훑어 정적
+    strings 에 없는 문자열만 보고한다. 신뢰할 수 없는 바이너리를 실행하므로 기본
+    비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.runtime_strings, data, breakpoint=breakpoint, steps=steps
+    )
+
+
 @router.get("/{sha256}/strategy")
 def binary_strategy(
     sha256: str,
