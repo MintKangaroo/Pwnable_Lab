@@ -376,6 +376,8 @@ export const api = {
     postQuery<Record<string, unknown>>(`/binaries/${sha}/auto-ret2libc`, { offset }),
   debugScript: (sha: string, commands: Record<string, unknown>[]) =>
     postJSON<Record<string, unknown>>(`/binaries/${sha}/debug`, { commands }),
+  explainStrategy: (sha: string) =>
+    postJSON<Record<string, unknown>>(`/binaries/${sha}/explain-strategy`, {}),
   cfg: (sha: string, address: number | string) =>
     request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}/cfg`),
   xrefs: (
