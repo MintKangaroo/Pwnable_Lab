@@ -88,6 +88,7 @@ from pwnable_lab.sandbox import (
     auto_ret2win_pie_in_container,
     confirm_offset_in_container,
     confirm_offset_in_process,
+    find_oep_candidate,
     require_isolation_marker,
     require_sandbox_enabled,
     run_debug_script,
@@ -1020,6 +1021,35 @@ class AnalysisService:
         try:
             return runtime_strings(
                 path, breakpoint=breakpoint, steps=steps, limits=limits
+            )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def oep_candidate(
+        self, data: bytes, *, start: int | None = None, max_steps: int = 200_000
+    ) -> dict:
+        """OEP 후보 탐지: 쓰기 가능·익명 실행 영역으로의 첫 tail jump 를 찾는다.
+
+        패커 언패킹 재구성 보조(외부 QEMU/rr 없이 ptrace 단일스텝). ``start`` 주소에서
+        스텝을 시작하면 startup/스텁 앞부분을 건너뛴다. 신뢰할 수 없는 바이너리를
+        실행하므로 마스터 게이트+격리 마커를 강제한다(in-process). 기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="OEP candidate")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return find_oep_candidate(
+                path, start=start, max_steps=max_steps, limits=limits
             )
         finally:
             try:

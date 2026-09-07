@@ -580,7 +580,10 @@ Pwnable_Lab/
   /binaries/{sha}/runtime-strings`, opt-in): ptrace 디버거로 대상을 브레이크포인트/
   N 스텝까지 실행한 뒤 쓰기 가능·익명 메모리를 훑어 **정적 strings 에 없는(런타임에
   복호화된) 문자열**만 발굴. 후속: 실제 언패킹(`upx -d`, upx 필요)
-- Phase 6D: QEMU/rr/OEP/reconstruction assistance
+- Phase 6D: 언패킹 재구성 보조 — **OEP 후보 탐지 구현(opt-in)**: 외부 QEMU/rr 없이
+  자체 ptrace 단일스텝으로, 제어가 원래 코드/라이브러리 밖의 **쓰기 가능·익명 실행
+  영역으로 처음 이전(tail jump)**되는 지점을 OEP 후보로 보고(`sandbox.oep`, `POST
+  /binaries/{sha}/oep`). 정상(W^X) 바이너리는 후보 없음. 후속: QEMU/rr 통합·덤프
 - Phase 7: privacy-controlled LLM provider abstraction
 
 ## 라이선스

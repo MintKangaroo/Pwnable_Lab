@@ -49,6 +49,7 @@ from pwnable_lab.sandbox.gate import (
     require_sandbox_boundary,
     require_sandbox_enabled,
 )
+from pwnable_lab.sandbox.oep import find_oep_candidate
 from pwnable_lab.sandbox.pie import auto_execve_pie as auto_execve_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2system_pie as auto_ret2system_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2win_pie as auto_ret2win_pie_core
@@ -110,6 +111,7 @@ __all__ = [
     "confirm_offset_in_container",
     "confirm_offset_in_process",
     "confirm_return_offset",
+    "find_oep_candidate",
     "resolve_pie_base",
     "run_two_stage",
     "run_two_stage_shell",
