@@ -89,6 +89,7 @@ from pwnable_lab.sandbox import (
     auto_ret2win_pie_in_container,
     confirm_offset_in_container,
     confirm_offset_in_process,
+    dump_memory,
     execution_trace,
     find_oep_candidate,
     require_isolation_marker,
@@ -1123,6 +1124,40 @@ class AnalysisService:
         try:
             return execution_trace(
                 path, start=start, max_steps=max_steps, limits=limits
+            )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def dump_memory(
+        self,
+        data: bytes,
+        *,
+        breakpoint: int | None = None,
+        steps: int = 0,
+        select: str = "writable",
+    ) -> dict:
+        """프로세스 메모리 스냅샷: 지정 시점의 매핑 영역 바이트·엔트로피·해시 덤프.
+
+        언패킹·복호화된 프로세스 이미지를 재구성하는 데 쓴다. 신뢰할 수 없는
+        바이너리를 **실행**하므로 마스터 게이트+격리 마커를 강제한다(in-process).
+        기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Memory dump")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return dump_memory(
+                path, breakpoint=breakpoint, steps=steps, select=select, limits=limits
             )
         finally:
             try:
