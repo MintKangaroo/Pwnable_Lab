@@ -584,7 +584,12 @@ Pwnable_Lab/
   자체 ptrace 단일스텝으로, 제어가 원래 코드/라이브러리 밖의 **쓰기 가능·익명 실행
   영역으로 처음 이전(tail jump)**되는 지점을 OEP 후보로 보고(`sandbox.oep`, `POST
   /binaries/{sha}/oep`). 정상(W^X) 바이너리는 후보 없음. 후속: QEMU/rr 통합·덤프
-- Phase 7: privacy-controlled LLM provider abstraction
+- Phase 7: 프라이버시 제어 LLM provider 추상화 — **구현(기본 차단)**: 기본 provider 는
+  `null`(어떤 데이터도 외부로 나가지 않음). `PLAB_LLM_ENABLED=1` + `PLAB_LLM_PROVIDER`
+  로 켤 때만 **정적 전략 요약 텍스트**(바이너리 원본이 아님)를 provider 에 보내 자연어
+  설명을 받는다(`analyzer.llm`, `POST /binaries/{sha}/explain-strategy`). anthropic
+  provider 는 `anthropic` SDK 를 지연 임포트(선택적 의존성), 기본 모델 `claude-opus-5`.
+  후속: 프론트 노출·다른 provider·요약 재구성
 
 ## 라이선스
 

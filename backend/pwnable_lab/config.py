@@ -88,6 +88,20 @@ class Settings(BaseSettings):
     ghidra_timeout_seconds: float = Field(default=180.0, gt=0, le=1800)
     ghidra_max_functions: int = Field(default=200, gt=0, le=5000)
 
+    # LLM provider 추상화 (Phase 7, 프라이버시 기본 차단).
+    #
+    # 기본값은 **완전 비활성**(null provider) — 어떤 분석 데이터도 외부로 나가지
+    # 않는다. 켜야만("PLAB_LLM_ENABLED=1") 선택한 provider 로 **정적 전략 요약 텍스트**
+    # (바이너리 원본이 아니라)를 보내 자연어 설명을 받는다. 이 플래그를 켜는 것이
+    # "분석 요약을 외부 LLM 에 보내도 된다"는 운영자의 명시적 동의다.
+    #   PLAB_LLM_PROVIDER — "null"(기본, 무전송) | "anthropic"(opt-in).
+    #   PLAB_LLM_MODEL    — anthropic provider 의 모델 ID(기본 claude-opus-5).
+    # anthropic provider 는 `anthropic` SDK 를 **지연 임포트**한다(선택적 의존성).
+    llm_enabled: bool = False
+    llm_provider: str = Field(default="null", pattern="^(null|anthropic)$")
+    llm_model: str = "claude-opus-5"
+    llm_max_tokens: int = Field(default=1024, gt=0, le=16384)
+
     # CORS
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 

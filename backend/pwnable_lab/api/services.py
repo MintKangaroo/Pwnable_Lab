@@ -34,6 +34,7 @@ from pwnable_lab.analyzer.ghidra_insights import (
     overflow_insights,
 )
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
+from pwnable_lab.analyzer.llm import LLMProvider, build_provider
 from pwnable_lab.analyzer.packing import detect_packing
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
@@ -110,8 +111,12 @@ class ArtifactInspection:
 
 
 class AnalysisService:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, *, llm_provider: LLMProvider | None = None
+    ) -> None:
         self.settings = settings
+        # 테스트/의존성 주입용 provider override(없으면 설정에서 만든다).
+        self._llm_provider = llm_provider
 
     def inspect(self, data: bytes) -> ArtifactInspection:
         artifact_format = detect_format(data)
@@ -332,6 +337,33 @@ class AnalysisService:
             parse_elf(data),
             max_instructions=self.settings.max_disasm_instructions,
         )
+
+    def explain_strategy(self, data: bytes) -> dict:
+        """정적 전략에 (선택적) LLM 자연어 설명을 덧붙인다 — 프라이버시 기본 차단.
+
+        LLM 이 비활성(기본)이면 어떤 데이터도 외부로 나가지 않고 ``explanation`` 은
+        None(정적 전략만). 켜져 있으면 **정적 전략 요약 텍스트**(바이너리 원본이 아님)
+        만 provider 에 보내 설명을 받는다. provider 는 설정 또는 주입값에서 정한다.
+        """
+
+        strategy = self.exploit_strategy(data)
+        provider = build_provider(self.settings, override=self._llm_provider)
+        explanation = ""
+        if provider.name != "null":
+            explanation = provider.explain(_strategy_prompt(strategy))
+        return {
+            "strategy": strategy,
+            "llm": {
+                "enabled": self.settings.llm_enabled or self._llm_provider is not None,
+                "provider": provider.name,
+                "explanation": explanation or None,
+                "note": (
+                    "LLM 비활성 — 정적 전략만(외부 전송 없음)."
+                    if not explanation
+                    else None
+                ),
+            },
+        }
 
     def confirm_offset(self, data: bytes, *, pattern_length: int | None = None) -> dict:
         """업로드 바이너리를 격리 러너로 실제 실행해 반환 주소 오프셋을 확정한다.
@@ -1772,3 +1804,38 @@ def _parse_leaked_address(verification: dict) -> int | None:
     if not raw:
         return None
     return int.from_bytes(raw[:8], "little")
+
+
+def _strategy_prompt(strategy: dict) -> str:
+    """정적 전략 dict 를 LLM 에 보낼 **요약 텍스트**로 압축한다(바이너리 원본 제외).
+
+    보내는 것은 아키텍처/보호기법/프리미티브/후보 경로의 텍스트 요약뿐이다.
+    업로드 바이너리 바이트나 원시 디스어셈블은 포함하지 않는다(프라이버시).
+    """
+
+    lines: list[str] = []
+    arch = f"{strategy.get('machine', '?')} {strategy.get('bits', '?')}-bit"
+    pie = "PIE" if strategy.get("position_independent") else "non-PIE"
+    lines.append(f"대상: {arch}, {pie}")
+    prot = strategy.get("protections") or {}
+    if prot:
+        summary = ", ".join(f"{k}={v}" for k, v in prot.items() if isinstance(v, str))
+        if summary:
+            lines.append(f"보호기법: {summary}")
+    prims = [p.get("key") or p.get("id") for p in strategy.get("primitives", [])]
+    prims = [p for p in prims if p]
+    if prims:
+        lines.append("프리미티브: " + ", ".join(str(p) for p in prims))
+    rec = strategy.get("recommended_path_id")
+    if rec:
+        lines.append(f"추천 경로: {rec}")
+    for path in strategy.get("paths", []):
+        title = path.get("korean_title") or path.get("title") or path.get("id")
+        status = path.get("status", "?")
+        lines.append(f"\n[{path.get('id')}] {title} (status={status})")
+        if path.get("summary"):
+            lines.append(f"  요약: {path['summary']}")
+        pre = path.get("preconditions") or []
+        if pre:
+            lines.append("  전제: " + "; ".join(str(x) for x in pre[:6]))
+    return "\n".join(lines)
