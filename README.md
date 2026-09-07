@@ -235,9 +235,12 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
   대신 전략 스켈레톤 유지
 - **원격 흐름 실측(`sandbox.remote`)**: 확정 payload 가 실제 **TCP 서비스**에서도 셸을
   따는지 소켓으로 증명(`prove_shell_remote`) — 생성 스크립트의 *remote-ready* 주장을
-  네트워크 연결로 뒷받침. **트러스트 모델상 network-disabled 샌드박스와 분리**된
-  클라이언트측 유틸리티로, 바이너리를 실행하지 않고 사용자가 지정한 원격에 바이트만
-  보낸다(서버 아웃바운드 SSRF 위험을 만들지 않도록 HTTP API 미노출)
+  네트워크 연결로 뒷받침. **인터랙티브 세션 증명**(`prove_interactive_shell_remote`)은
+  한 연결에서 `id`/`pwd`/`cat flag` 같은 **여러 명령을 순차 실행**하고 각 출력을 고유
+  sentinel 로 잘라 회수 — 셸 획득 후 실사용 흐름과 동형. **트러스트 모델상
+  network-disabled 샌드박스와 분리**된 클라이언트측 유틸리티로, 바이너리를 실행하지
+  않고 사용자가 지정한 원격에 바이트만 보낸다(서버 아웃바운드 SSRF 위험을 만들지
+  않도록 HTTP API 미노출)
 - **익스 검증**: 구성한 payload/ROP 체인을 실제 주입해 제어 흐름 탈취를 확인
   (마커 매치 또는 control-transfer)
 - **libc leak & ret2libc**: `puts(puts@got)` 로 런타임 libc 주소를 유출하고,
@@ -562,7 +565,7 @@ Pwnable_Lab/
   `%n` GOT overwrite(non-PIE·PIE) 까지 셸 획득을 자동 증명. Ghidra 디컴파일 백엔드를
   vuln_scan/strategy 에 피드백. 설계 노트:
   [`docs/AUTO_EXPLOIT_SANDBOX.md`](docs/AUTO_EXPLOIT_SANDBOX.md),
-  [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 후속: 인터랙티브 원격 흐름
+  [`docs/GHIDRA_DECOMPILE.md`](docs/GHIDRA_DECOMPILE.md). 자동 익스 스토리 완성
 - Phase 6B: GDB/MI와 WebSocket interactive debugger
 - Phase 6C: packing/UPX/obfuscation/runtime strings
 - Phase 6D: QEMU/rr/OEP/reconstruction assistance

