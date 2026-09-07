@@ -582,12 +582,15 @@ Pwnable_Lab/
   실행 후 쓰기 가능·익명 메모리를 훑어 **정적 strings 에 없는(런타임에 복호화된)
   문자열**만 발굴. **UPX 언패킹**(`sandbox.unpack`, `POST /binaries/{sha}/unpack`):
   UPX 로 판별된 ELF 를 `upx -d` 로 복원(실행하지 않고 압축만 해제)
-- Phase 6D: 언패킹 재구성 보조 — **OEP 후보 탐지 + 실행 트레이스 구현(opt-in)**: 외부
-  QEMU/rr 없이 자체 ptrace 단일스텝으로 (1) 제어가 원래 코드/라이브러리 밖의 **쓰기
-  가능·익명 실행 영역으로 처음 이전(tail jump)**되는 지점을 OEP 후보로 보고
-  (`sandbox.oep`, `POST /binaries/{sha}/oep`; 정상 W^X 바이너리는 후보 없음), (2)
-  실행 명령 주소를 바이너리 자체 코드 범위 안에서 연속 중복 제거하며 기록하는 실행
-  트레이스(`sandbox.trace`, `POST /binaries/{sha}/trace`). 후속: QEMU/rr 통합·메모리 덤프
+- Phase 6D: 동적 분석 / 언패킹 재구성 보조 — **OEP 후보 탐지 + 실행 트레이스 + QEMU
+  크로스아키텍처 실행 구현(opt-in)**: (1) ptrace 단일스텝으로 제어가 원래 코드/라이브러리
+  밖의 **쓰기 가능·익명 실행 영역으로 처음 이전(tail jump)**되는 지점을 OEP 후보로 보고
+  (`sandbox.oep`, `POST /binaries/{sha}/oep`; 정상 W^X 바이너리는 후보 없음), (2) 실행
+  명령 주소를 바이너리 자체 코드 범위 안에서 연속 중복 제거하며 기록하는 실행 트레이스
+  (`sandbox.trace`, `POST /binaries/{sha}/trace`), (3) 네이티브 러너가 x86-64 전용이라
+  못 돌리는 **다른 아키텍처(ARM/MIPS/RISC-V 등) 바이너리를 `qemu-<arch>-static` user-mode
+  로 실행**해 stdout·종료코드 관측(`sandbox.qemu`, `POST /binaries/{sha}/qemu-run`;
+  자원 상한·타임아웃·프로세스그룹 종료로 감쌈). 후속: QEMU full-system·rr 기록/재생·메모리 덤프
 - Phase 7: 프라이버시 제어 LLM provider 추상화 — **구현(기본 차단)**: 기본 provider 는
   `null`(어떤 데이터도 외부로 나가지 않음). `PLAB_LLM_ENABLED=1` + `PLAB_LLM_PROVIDER`
   로 켤 때만 **정적 전략 요약 텍스트**(바이너리 원본이 아님)를 provider 에 보내 자연어
