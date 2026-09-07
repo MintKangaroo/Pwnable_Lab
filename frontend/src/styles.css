@@ -4734,6 +4734,31 @@ select {
   gap: 8px 20px;
 }
 
+.fmt-write-note {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border, #1f2937);
+  border-radius: 10px;
+  background: rgba(16, 185, 129, 0.06);
+}
+.fmt-write-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.fmt-write-caption {
+  color: var(--muted, #94a3b8);
+  font-size: 11px;
+}
+.fmt-write-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+
 .exploit-script {
   margin-top: 10px;
   padding: 8px 10px;
