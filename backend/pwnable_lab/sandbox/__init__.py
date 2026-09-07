@@ -16,6 +16,7 @@
 from pwnable_lab.sandbox.executor import (
     auto_execve_in_container,
     auto_execve_pie_in_container,
+    auto_fmt_got_overwrite_in_container,
     auto_fmt_leak_pie_in_container,
     auto_ret2libc_in_container,
     auto_ret2system32_in_container,
@@ -30,6 +31,9 @@ from pwnable_lab.sandbox.executor import (
 )
 from pwnable_lab.sandbox.execve import auto_execve as auto_execve_core
 from pwnable_lab.sandbox.fmtleak import auto_fmt_leak_pie as auto_fmt_leak_pie_core
+from pwnable_lab.sandbox.fmtwrite import (
+    auto_fmt_got_overwrite as auto_fmt_got_overwrite_core,
+)
 from pwnable_lab.sandbox.gate import (
     require_isolation_marker,
     require_sandbox_boundary,
@@ -71,6 +75,8 @@ __all__ = [
     "auto_execve_in_container",
     "auto_execve_pie_core",
     "auto_execve_pie_in_container",
+    "auto_fmt_got_overwrite_core",
+    "auto_fmt_got_overwrite_in_container",
     "auto_fmt_leak_pie_core",
     "auto_fmt_leak_pie_in_container",
     "auto_ret2libc_core",

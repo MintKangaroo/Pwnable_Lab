@@ -283,6 +283,22 @@ async def binary_auto_fmt_leak(
     return await run_in_threadpool(service.auto_fmt_leak_pie, data)
 
 
+@router.post("/{sha256}/auto-fmt-write")
+async def binary_auto_fmt_write(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """포맷스트링 %n GOT 덮어쓰기 자동 익스: GOT → win 리다이렉트 → 셸 증명.
+
+    ``printf(user_input)`` 포맷스트링 취약점을 노린다. fmt 인자 위치를 자체 확정하고
+    임포트 GOT 후보를 모두 시도해 셸이 뜨는 첫 조합을 채택한다(non-PIE amd64, offset
+    불필요). 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.auto_fmt_got_overwrite, data)
+
+
 @router.post("/{sha256}/leak")
 async def binary_leak(
     sha256: str,

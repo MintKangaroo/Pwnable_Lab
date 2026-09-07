@@ -871,6 +871,7 @@ def verify_shell(
     *,
     marker: str,
     command: str | None = None,
+    trigger: bytes | None = None,
     limits: SandboxLimits | None = None,
     disable_aslr: bool = False,
 ) -> ShellProof:
@@ -880,6 +881,11 @@ def verify_shell(
     PTY(tty)에 붙어 대화형으로 stdin 을 읽는다. 우리가 ``echo <marker>`` 를 보내면
     셸이 실행해 marker 를 출력하므로, marker 관측 = 셸 획득 증명이다(파이프의 stdio
     버퍼링 문제를 tty 라인 규율이 우회한다).
+
+    ``trigger`` 가 주어지면 payload 전송·settle 뒤에 그 한 줄을 더 보낸 다음 명령을
+    흘린다. 포맷스트링 GOT 덮어쓰기처럼 payload 자체는 **다음 호출**에서야 제어를
+    이전하는 경우(루프 안 ``printf`` 자기 GOT 를 덮고, 다음 입력이 ``printf`` =
+    ``win`` 을 호출하게)를 위한 것이다. ``None`` 이면 기존 2단계(payload→명령) 동작.
 
     tty 라인 규율이 payload 의 제어바이트를 해석하지 않도록 raw 모드로 둔다.
     """
@@ -918,6 +924,11 @@ def verify_shell(
     try:
         os.write(master, payload + b"\n")
         time.sleep(limits.shell_settle_seconds)
+        if trigger is not None:
+            # payload 는 GOT 를 덮기만 하고, 이 트리거 입력이 덮인 함수를 다시
+            # 호출하게 해 win 으로 제어를 이전시킨다(그 뒤 셸에 명령을 흘린다).
+            os.write(master, trigger + b"\n")
+            time.sleep(limits.shell_settle_seconds)
         os.write(master, cmd.encode() + b"\n")
     except OSError:
         pass

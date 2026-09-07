@@ -984,6 +984,32 @@ def ret2system_plan32(image: ElfImage) -> dict | None:
     return {"system": system, "binsh": binsh}
 
 
+def got_overwrite_targets(image: ElfImage) -> list[tuple[str, int]]:
+    """포맷스트링 ``%n`` 쓰기로 덮을 수 있는 GOT 엔트리 후보 ``(symbol, got_addr)``.
+
+    동적 링크된 각 임포트 함수는 ``.got.plt`` 에 런타임 주소 슬롯을 가진다. 그 슬롯을
+    ``win`` 주소로 덮은 뒤 해당 함수가 다시 호출되면 제어가 ``win`` 으로 이전된다
+    (예: 루프 안 ``printf`` 자기 자신, 또는 포맷스트링 뒤에 호출되는 ``puts``/``exit``).
+
+    non-PIE 절대주소만 대상(``got_address`` 가 유효한 엔트리). 어느 함수가 실제로
+    포맷스트링 뒤에 호출되는지는 정적으로 확정하기 어려우므로, 후보를 모두 돌려주고
+    샌드박스가 셸 증명으로 실제로 먹히는 것을 채택한다. 32-bit 는 대상 아님.
+    """
+
+    if (image.bits or 64) != 64:
+        return []
+    report = analyze_got_plt(image)
+    targets: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for entry in report.plt_entries:
+        sym = entry.symbol
+        if not sym or not entry.got_address or sym in seen:
+            continue
+        seen.add(sym)
+        targets.append((sym, entry.got_address))
+    return targets
+
+
 def execve_plan(image: ElfImage) -> dict | None:
     """amd64 execve("/bin/sh", 0, 0) syscall ROP 체인 구성요소를 정적으로 수집.
 
