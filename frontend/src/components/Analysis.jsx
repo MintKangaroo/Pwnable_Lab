@@ -1998,6 +1998,72 @@ function PieBaseNote({ ver }) {
   );
 }
 
+function FmtWriteNote({ ver }) {
+  // 포맷스트링 %n GOT 덮어쓰기(non-PIE / PIE) 전용: 덮은 GOT·리다이렉트 타깃·유출 base.
+  if (
+    !ver ||
+    (ver.technique !== 'fmt-got-overwrite' && ver.technique !== 'fmt-got-overwrite-pie')
+  ) {
+    return null;
+  }
+  const isPie = ver.technique === 'fmt-got-overwrite-pie';
+  const gotRuntime = ver.got_runtime_hex || ver.got_hex;
+  const targetRuntime = ver.target_runtime_hex || ver.target_hex;
+  return (
+    <div className="fmt-write-note">
+      <div className="fmt-write-head">
+        <Badge tone="green">포맷스트링 %n GOT 덮어쓰기</Badge>
+        <span className="fmt-write-caption">
+          {isPie
+            ? 'in-band leak 로 base 복원 · ASLR 켜져도 성립'
+            : 'GOT 슬롯 → win 리다이렉트'}
+        </span>
+      </div>
+      <div className="fmt-write-grid">
+        {ver.got_symbol && (
+          <div className="runner-kv">
+            <span>덮은 GOT</span>
+            <strong>
+              <code>
+                {ver.got_symbol}
+                {gotRuntime ? ` @ ${gotRuntime}` : ''}
+              </code>
+            </strong>
+          </div>
+        )}
+        {ver.target_name && targetRuntime && (
+          <div className="runner-kv">
+            <span>{ver.target_name}() 리다이렉트</span>
+            <strong>
+              <code>{targetRuntime}</code>
+            </strong>
+          </div>
+        )}
+        {ver.fmt_position != null && (
+          <div className="runner-kv">
+            <span>fmt 인자 위치</span>
+            <strong>%{ver.fmt_position}$</strong>
+          </div>
+        )}
+        {isPie && ver.base_hex && (
+          <div className="runner-kv">
+            <span>유출 base</span>
+            <strong>
+              <code>{ver.base_hex}</code>
+            </strong>
+          </div>
+        )}
+        {isPie && ver.leak_position != null && (
+          <div className="runner-kv">
+            <span>leak 위치</span>
+            <strong>%{ver.leak_position}$p</strong>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RunnerResult({ state }) {
   if (state.status === 'running') return <Loading label="샌드박스에서 실행 중" />;
   if (state.status === 'error') {
@@ -2123,6 +2189,7 @@ function ExploitRunner({ sha }) {
               </div>
             )}
             <PieBaseNote ver={ver} />
+            <FmtWriteNote ver={ver} />
             {ver?.shell_proof && <ShellSession proof={ver.shell_proof} />}
             <ExploitScriptCard script={autoState.result?.exploit_script} />
             {injectedPaths.map((p) => (
