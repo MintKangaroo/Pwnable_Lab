@@ -268,6 +268,40 @@ async def binary_oep(
     )
 
 
+@router.post("/{sha256}/unpack")
+async def binary_unpack(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """UPX 로 패킹된 ELF 를 `upx -d` 로 언패킹한다(대상 미실행 — 실행 게이트 없음).
+
+    비 ELF/비 UPX/upx 미설치는 ``attempted=False`` 로 보고한다. 성공 시 언패킹 크기·
+    SHA-256 등 메타데이터를 반환한다.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.unpack, data)
+
+
+@router.post("/{sha256}/trace")
+async def binary_trace(
+    sha256: str,
+    start: int | None = Query(default=None, ge=0, le=0xFFFFFFFFFFFF),
+    max_steps: int = Query(default=20_000, ge=1, le=5_000_000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """실행 트레이스(rr-lite): 대상을 단일스텝해 자신의 실행 영역 안 명령 주소를 기록.
+
+    외부 QEMU/rr 없이 ptrace 로 수행한다. ``start`` 로 스텝 시작 주소를 지정할 수 있다.
+    신뢰할 수 없는 바이너리를 실행하므로 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.execution_trace, data, start=start, max_steps=max_steps
+    )
+
+
 @router.post("/{sha256}/explain-strategy")
 async def binary_explain_strategy(
     sha256: str,

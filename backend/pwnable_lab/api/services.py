@@ -89,11 +89,13 @@ from pwnable_lab.sandbox import (
     auto_ret2win_pie_in_container,
     confirm_offset_in_container,
     confirm_offset_in_process,
+    execution_trace,
     find_oep_candidate,
     require_isolation_marker,
     require_sandbox_enabled,
     run_debug_script,
     runtime_strings,
+    unpack_upx,
     verify_exploit_in_container,
     verify_exploit_in_process,
 )
@@ -1081,6 +1083,44 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return find_oep_candidate(
+                path, start=start, max_steps=max_steps, limits=limits
+            )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def unpack(self, data: bytes) -> dict:
+        """UPX 로 패킹된 ELF 를 `upx -d` 로 언패킹한다(대상 미실행).
+
+        압축을 풀 뿐 바이너리를 실행하지 않으므로 샌드박스 실행 게이트가 없다.
+        비 ELF/비 UPX/upx 미설치는 ``attempted=False`` 로 보고한다.
+        """
+
+        self._require_format(data, ArtifactFormat.ELF, feature="UPX unpack")
+        return unpack_upx(data)
+
+    def execution_trace(
+        self, data: bytes, *, start: int | None = None, max_steps: int = 20_000
+    ) -> dict:
+        """대상을 단일스텝해 자신의 실행 영역 안 명령 주소 트레이스를 수집한다(rr-lite).
+
+        신뢰할 수 없는 바이너리를 실행하므로 마스터 게이트+격리 마커를 강제한다
+        (in-process). 기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Execution trace")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return execution_trace(
                 path, start=start, max_steps=max_steps, limits=limits
             )
         finally:

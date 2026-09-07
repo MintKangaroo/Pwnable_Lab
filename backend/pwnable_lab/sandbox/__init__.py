@@ -75,6 +75,8 @@ from pwnable_lab.sandbox.runner import (
     verify_shell,
 )
 from pwnable_lab.sandbox.runtime_strings import runtime_strings
+from pwnable_lab.sandbox.trace import execution_trace
+from pwnable_lab.sandbox.unpack import unpack_upx
 
 __all__ = [
     "CrashObservation",
@@ -111,6 +113,7 @@ __all__ = [
     "confirm_offset_in_container",
     "confirm_offset_in_process",
     "confirm_return_offset",
+    "execution_trace",
     "find_oep_candidate",
     "resolve_pie_base",
     "run_two_stage",
@@ -121,6 +124,7 @@ __all__ = [
     "run_debug_script",
     "run_with_input",
     "runtime_strings",
+    "unpack_upx",
     "verify_exploit_in_container",
     "verify_exploit_in_process",
     "verify_payload",
