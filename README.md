@@ -571,25 +571,29 @@ Pwnable_Lab/
   스택 조회·stdin 주입을 지속 세션으로 노출(`sandbox.debugger`). **배치**(`POST
   /binaries/{sha}/debug`)와 **WebSocket 라이브 세션**(`/binaries/{sha}/debug/ws`,
   명령/결과 프레임 중계 — ptrace 트레이서 스레드 고정을 전용 워커 스레드로 처리) 모두
-  지원. 프론트 Exploit Runner 에 Debugger 카드(브레이크포인트→레지스터/스택/출력,
-  배치 `/debug` 사용) 노출
-- Phase 6C: 패커/난독화 — **정적 탐지 구현**(`sandbox` 아님, 실행 없음): UPX 서명
-  (섹션 이름·매직)·높은 엔트로피 실행 영역·비정상 섹션 테이블·적은 임포트·오버레이
-  신호를 가중 합산해 확신도·패커 이름 판별(`analyzer.packing`, `GET
-  /binaries/{sha}/packing`). **런타임 strings**(`sandbox.runtime_strings`, `POST
-  /binaries/{sha}/runtime-strings`, opt-in): ptrace 디버거로 대상을 브레이크포인트/
-  N 스텝까지 실행한 뒤 쓰기 가능·익명 메모리를 훑어 **정적 strings 에 없는(런타임에
-  복호화된) 문자열**만 발굴. 후속: 실제 언패킹(`upx -d`, upx 필요)
-- Phase 6D: 언패킹 재구성 보조 — **OEP 후보 탐지 구현(opt-in)**: 외부 QEMU/rr 없이
-  자체 ptrace 단일스텝으로, 제어가 원래 코드/라이브러리 밖의 **쓰기 가능·익명 실행
-  영역으로 처음 이전(tail jump)**되는 지점을 OEP 후보로 보고(`sandbox.oep`, `POST
-  /binaries/{sha}/oep`). 정상(W^X) 바이너리는 후보 없음. 후속: QEMU/rr 통합·덤프
+  지원. 프론트 ELF Workspace 에 **Live Debugger 탭**(WebSocket 라이브 세션: 연결/브레이크
+  포인트/continue/step/레지스터/스택 프레임 로그)과 Exploit Runner 의 Debugger 카드(배치
+  `/debug`) 모두 노출
+- Phase 6C: 패커/난독화 — **정적 탐지 + 런타임 발굴 + 언패킹 구현**: 정적 탐지
+  (`analyzer.packing`, `GET /binaries/{sha}/packing`)는 실행 없이 UPX 서명(섹션 이름·
+  매직)·높은 엔트로피 실행 영역·비정상 섹션 테이블·적은 임포트·오버레이 신호를 가중
+  합산해 확신도·패커 이름 판별. **런타임 strings**(`sandbox.runtime_strings`, `POST
+  /binaries/{sha}/runtime-strings`, opt-in): ptrace 디버거로 브레이크포인트/N 스텝까지
+  실행 후 쓰기 가능·익명 메모리를 훑어 **정적 strings 에 없는(런타임에 복호화된)
+  문자열**만 발굴. **UPX 언패킹**(`sandbox.unpack`, `POST /binaries/{sha}/unpack`):
+  UPX 로 판별된 ELF 를 `upx -d` 로 복원(실행하지 않고 압축만 해제)
+- Phase 6D: 언패킹 재구성 보조 — **OEP 후보 탐지 + 실행 트레이스 구현(opt-in)**: 외부
+  QEMU/rr 없이 자체 ptrace 단일스텝으로 (1) 제어가 원래 코드/라이브러리 밖의 **쓰기
+  가능·익명 실행 영역으로 처음 이전(tail jump)**되는 지점을 OEP 후보로 보고
+  (`sandbox.oep`, `POST /binaries/{sha}/oep`; 정상 W^X 바이너리는 후보 없음), (2)
+  실행 명령 주소를 바이너리 자체 코드 범위 안에서 연속 중복 제거하며 기록하는 실행
+  트레이스(`sandbox.trace`, `POST /binaries/{sha}/trace`). 후속: QEMU/rr 통합·메모리 덤프
 - Phase 7: 프라이버시 제어 LLM provider 추상화 — **구현(기본 차단)**: 기본 provider 는
   `null`(어떤 데이터도 외부로 나가지 않음). `PLAB_LLM_ENABLED=1` + `PLAB_LLM_PROVIDER`
   로 켤 때만 **정적 전략 요약 텍스트**(바이너리 원본이 아님)를 provider 에 보내 자연어
-  설명을 받는다(`analyzer.llm`, `POST /binaries/{sha}/explain-strategy`). anthropic
-  provider 는 `anthropic` SDK 를 지연 임포트(선택적 의존성), 기본 모델 `claude-opus-5`.
-  후속: 프론트 노출·다른 provider·요약 재구성
+  설명을 받는다(`analyzer.llm`, `POST /binaries/{sha}/explain-strategy`; 프론트 Strategy
+  뷰에 "LLM 설명 생성" 카드). anthropic provider 는 `anthropic` SDK 를 지연 임포트
+  (선택적 의존성), 기본 모델 `claude-opus-5`. 후속: 다른 provider·요약 재구성
 
 ## 라이선스
 
