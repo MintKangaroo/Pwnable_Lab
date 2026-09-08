@@ -122,6 +122,47 @@ def test_checksec_matches_compile_flags(tmp_path):
     assert no_canary.pie != pie.pie
 
 
+def test_vuln_scan_golden_matrix(tmp_path):
+    """알려진 위험 sink 들을 vuln_scan 이 올바른 심볼·카테고리로 잡아야 한다."""
+    from pwnable_lab.analyzer.vuln_scan import scan_vulns
+
+    body = (
+        'void vuln(void){ char b[64]; char *s = getenv("X");'
+        ' gets(b); sprintf(b, "%s", s ? s : ""); printf(s ? s : ""); }\n'
+    )
+    binary = _compile(tmp_path, "sinks", body)
+    found = {(f.symbol, f.category) for f in scan_vulns(parse_elf(binary.read_bytes()))}
+    # 회귀 락: 각 sink 가 기대 카테고리로 탐지돼야 한다.
+    assert ("gets", "memory-corruption") in found
+    assert ("sprintf", "memory-corruption") in found
+    assert ("printf", "format-string") in found
+    assert ("system", "command-execution") in found
+
+
+def test_strategy_recommends_ret2win_for_win_overflow(tmp_path):
+    """win() 이 있는 비 PIE 스택 오버플로는 ret2win 을 추천 경로로 골라야 한다."""
+    binary = _compile(tmp_path, "reco", "void vuln(void){ char b[64]; gets(b); }")
+    report = analyze_strategy(parse_elf(binary.read_bytes()))
+    assert report["recommended_path_id"] == "ret2win"
+    ret2win = next((p for p in report["paths"] if p["id"] == "ret2win"), None)
+    assert ret2win is not None and ret2win["status"] == "recommended"
+
+
+def test_checksec_relro_matrix(tmp_path):
+    """RELRO 컴파일 플래그(오라클)와 checksec.relro 표현이 일치해야 한다."""
+    body = "void vuln(void){ char buf[64]; gets(buf); }"
+    full = run_checksec(
+        parse_elf(
+            _compile(tmp_path, "relrofull", body, "-Wl,-z,relro,-z,now").read_bytes()
+        )
+    )
+    none = run_checksec(
+        parse_elf(_compile(tmp_path, "relrono", body, "-Wl,-z,norelro").read_bytes())
+    )
+    assert full.relro == "Full"
+    assert none.relro == "No"
+
+
 @pytest.mark.skipif(not _HAVE_NM, reason="nm 필요(가젯 주소 오라클)")
 def test_planted_gadgets_are_found(tmp_path):
     """인라인 asm 으로 심은 가젯을 scan_gadgets 가 정확한 주소로 찾아야 한다."""
