@@ -38,13 +38,27 @@ _EM_TO_ARCH = {
 
 
 def qemu_arch(data: bytes) -> str | None:
-    """ELF 헤더 e_machine 에서 qemu-user 아키텍처 접미사를 유추한다(없으면 None)."""
+    """ELF 헤더 e_machine 에서 qemu-user 아키텍처 접미사를 유추한다(없으면 None).
+
+    일부 아키텍처는 엔디언에 따라 qemu 바이너리가 다르다(MIPS big→``mips``/little→
+    ``mipsel``, ARM little→``arm``/big→``armeb``, PPC64 big→``ppc64``/little→
+    ``ppc64le``). EI_DATA 로 엔디언을 판별해 올바른 접미사를 고른다.
+    """
 
     if len(data) < 20 or data[:4] != b"\x7fELF":
         return None
     little = data[5] != 2  # EI_DATA: 2 == big-endian
     e_machine = int.from_bytes(data[18:20], "little" if little else "big")
-    return _EM_TO_ARCH.get(e_machine)
+    arch = _EM_TO_ARCH.get(e_machine)
+    if arch is None:
+        return None
+    if arch == "mips" and little:
+        return "mipsel"
+    if arch == "arm" and not little:
+        return "armeb"
+    if arch == "ppc64" and little:
+        return "ppc64le"
+    return arch
 
 
 def locate_qemu(arch: str) -> str | None:
@@ -90,9 +104,9 @@ def run_under_qemu(
         os.setsid()
         cpu = limits.cpu_seconds
         resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu))
-        space = limits.address_space_bytes
-        resource.setrlimit(resource.RLIMIT_AS, (space, space))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        # RLIMIT_AS 는 걸지 않는다: qemu-user 는 게스트 주소공간을 크게 예약하므로
+        # AS 상한이 qemu 자체를 죽인다. CPU 시간·wall-clock·프로세스그룹 종료로 바운딩.
 
     argv = [qemu] + (["-strace"] if strace else []) + [binary_path]
     # strace 면 syscall 트레이스(stderr)를 stdout 과 분리, 아니면 합친다.

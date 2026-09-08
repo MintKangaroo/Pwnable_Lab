@@ -590,8 +590,10 @@ Pwnable_Lab/
   (`sandbox.trace`, `POST /binaries/{sha}/trace`), (3) 네이티브 러너가 x86-64 전용이라
   못 돌리는 **다른 아키텍처(ARM/MIPS/RISC-V 등) 바이너리를 `qemu-<arch>-static` user-mode
   로 실행**해 stdout·종료코드 관측(`sandbox.qemu`, `POST /binaries/{sha}/qemu-run`;
-  자원 상한·타임아웃·프로세스그룹 종료로 감쌈; `strace=true` 면 qemu `-strace` 로
-  크로스아키텍처 **시스템콜 트레이스**도 반환), (4) 지정 시점(브레이크포인트/N 스텝)의
+  ELF e_machine+엔디언으로 qemu 바이너리를 정확히 선택 — MIPS big→`mips`/little→
+  `mipsel`, ARM little→`arm`/big→`armeb`; aarch64·arm·mips·mipsel 골든 코퍼스로
+  실측; 자원 상한·타임아웃·프로세스그룹 종료로 감쌈; `strace=true` 면 qemu `-strace`
+  로 크로스아키텍처 **시스템콜 트레이스**도 반환), (4) 지정 시점(브레이크포인트/N 스텝)의
   **프로세스 메모리 스냅샷 덤프**(`sandbox.memdump`, `POST /binaries/{sha}/memdump`;
   쓰기 가능/코드/전체 영역별 바이트·SHA-256·엔트로피 — 언패킹·복호화된 프로세스
   이미지 재구성용). 후속: QEMU full-system·rr 기록/재생
