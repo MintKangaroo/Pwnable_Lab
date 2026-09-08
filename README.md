@@ -617,7 +617,8 @@ Pwnable_Lab/
   으로 유출한다(`sandbox.orw`, `POST /binaries/{sha}/auto-orw`). 클린 pop rdi/rsi/rdx/
   rax 가젯 + syscall 가젯 + .bss 버퍼 + 바이너리 내 플래그 경로 문자열을 정적 수집해
   체인을 만들고, 샌드박스에서 실행해 **플래그 내용이 유출되는지로 성공을 증명**
-  (셸 획득이 아니라 플래그 유출). non-PIE amd64
+  (셸 획득이 아니라 플래그 유출). non-PIE amd64. **PIE 는 로드 base 를 로컬 관측
+  (ASLR-off)해 rebase**(`auto-orw?pie=true`, `aslr="disabled-for-local-proof"`)
 - one_gadget 정적 탐지(`one-gadget`) — **구현(실행 없음)**: libc 안에서 한 주소로
   점프하면 곧바로 `execve("/bin/sh", ...)` 가 실행되는 원샷 가젯을 찾는다. libc 실행
   코드를 capstone 으로 훑어 `lea rdi, [rip+/bin/sh]` 뒤에 `call execve`/execve

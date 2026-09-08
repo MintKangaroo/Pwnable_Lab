@@ -13,7 +13,7 @@ from pwnable_lab.api.services import AnalysisService
 from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import parse_elf
 from pwnable_lab.sandbox import SandboxLimits
-from pwnable_lab.sandbox.orw import auto_orw
+from pwnable_lab.sandbox.orw import auto_orw, auto_orw_pie
 
 _SUPPORTED = platform.system() == "Linux" and platform.machine() in {"x86_64", "AMD64"}
 _HAVE_GCC = shutil.which("gcc") is not None
@@ -62,16 +62,16 @@ def _headers_ok(tmp_path) -> bool:
     )
 
 
-def _build(tmp_path):
+def _build(tmp_path, *, pie: bool = False):
     flag = tmp_path / "flag.txt"
     flag.write_text(_MARKER + "\n")
     csrc = tmp_path / "orw.c"
     csrc.write_text(_SRC_TMPL.replace("{FLAG}", str(flag)))
-    out = tmp_path / "orw"
+    out = tmp_path / ("orw_pie" if pie else "orw")
+    flags = ["-fno-stack-protector", "-O0"]
+    flags += ["-pie", "-fPIE"] if pie else ["-no-pie"]
     subprocess.run(
-        ["gcc", "-fno-stack-protector", "-no-pie", "-O0", "-o", str(out), str(csrc)],
-        check=True,
-        capture_output=True,
+        ["gcc", *flags, "-o", str(out), str(csrc)], check=True, capture_output=True
     )
     return str(out)
 
@@ -137,6 +137,40 @@ def test_auto_orw_rejects_pie(tmp_path):
     result = auto_orw(str(out), offset=72, flag_path="/x", limits=SandboxLimits())
     assert result["attempted"] is False
     assert result["reason"] == "pie-needs-base-leak"
+
+
+@pytest.mark.skipif(not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요")
+def test_auto_orw_pie_leaks_flag(tmp_path):
+    if not _headers_ok(tmp_path):
+        pytest.skip("커널 seccomp 헤더 필요")
+    path = _build(tmp_path, pie=True)
+    result = auto_orw_pie(
+        path,
+        offset=72,
+        flag_path=str(tmp_path / "flag.txt"),
+        expect_marker=_MARKER,
+        limits=SandboxLimits(),
+    )
+    assert result["attempted"] is True
+    assert result["technique"] == "orw-pie"
+    assert result["succeeded"] is True
+    assert result["aslr"] == "disabled-for-local-proof"
+    assert result["base_hex"] is not None
+    assert _MARKER in result["leaked"]
+
+
+@pytest.mark.skipif(not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요")
+def test_auto_orw_pie_rejects_non_pie(tmp_path):
+    if not _headers_ok(tmp_path):
+        pytest.skip("커널 seccomp 헤더 필요")
+    result = auto_orw_pie(
+        _build(tmp_path),
+        offset=72,
+        flag_path=str(tmp_path / "flag.txt"),
+        limits=SandboxLimits(),
+    )
+    assert result["attempted"] is False
+    assert result["reason"] == "not-pie"
 
 
 @pytest.mark.skipif(not (_SUPPORTED and _HAVE_GCC), reason="Linux/x86-64 + gcc 필요")

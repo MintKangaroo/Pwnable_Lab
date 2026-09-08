@@ -489,14 +489,16 @@ async def binary_auto_orw(
     flag_path: str = Query(..., min_length=1, max_length=512),
     read_size: int = Query(default=100, ge=1, le=65536),
     expect_marker: str | None = Query(default=None, max_length=256),
+    pie: bool = Query(default=False),
     repo: BinaryRepository = Depends(get_repository),
     service: AnalysisService = Depends(get_service),
 ) -> dict:
     """ORW(open→read→write) syscall ROP 자동 익스: 플래그 파일을 열어 stdout 으로 유출.
 
     seccomp 로 execve 가 막힌 환경에서 셸 대신 플래그를 읽는다. ``flag_path`` 문자열이
-    바이너리에 있어야 하며, ``expect_marker`` 로 유출 성공을 판정할 수 있다(non-PIE
-    amd64). 신뢰할 수 없는 바이너리를 실행하므로 기본 비활성 — 503 가능.
+    바이너리에 있어야 하며, ``expect_marker`` 로 유출 성공을 판정할 수 있다. ``pie=true``
+    면 로드 base 를 로컬 관측(ASLR-off)해 rebase 한다(amd64). 신뢰할 수 없는 바이너리를
+    실행하므로 기본 비활성 — 503 가능.
     """
     data = repo.load_bytes(sha256)
     return await run_in_threadpool(
@@ -506,6 +508,7 @@ async def binary_auto_orw(
         flag_path=flag_path,
         read_size=read_size,
         expect_marker=expect_marker,
+        pie=pie,
     )
 
 
