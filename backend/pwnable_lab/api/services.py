@@ -104,6 +104,7 @@ from pwnable_lab.sandbox import (
     dump_memory,
     execution_trace,
     find_oep_candidate,
+    inspect_heap,
     require_isolation_marker,
     require_sandbox_enabled,
     run_debug_script,
@@ -1377,6 +1378,33 @@ class AnalysisService:
             return run_under_qemu(
                 path, stdin_data=stdin_data, strace=strace, limits=limits
             )
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def heap_inspect(
+        self, data: bytes, *, breakpoint: int | None = None, steps: int = 0
+    ) -> dict:
+        """실행 중 glibc 힙 청크·tcache 를 파싱한다(heap 익스 보조).
+
+        지정 시점(브레이크포인트/N 스텝)의 ``[heap]`` 청크 레이아웃과 tcache bin
+        상태를 덤프한다. 신뢰할 수 없는 바이너리를 **실행**하므로 마스터 게이트+격리
+        마커를 강제한다(in-process). 기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Heap inspect")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return inspect_heap(path, breakpoint=breakpoint, steps=steps, limits=limits)
         finally:
             try:
                 os.unlink(path)

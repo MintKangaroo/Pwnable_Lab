@@ -49,6 +49,7 @@ from pwnable_lab.sandbox.gate import (
     require_sandbox_boundary,
     require_sandbox_enabled,
 )
+from pwnable_lab.sandbox.heap import inspect_heap
 from pwnable_lab.sandbox.memdump import dump_memory
 from pwnable_lab.sandbox.oep import find_oep_candidate
 from pwnable_lab.sandbox.orw import auto_orw as auto_orw_core
@@ -124,6 +125,7 @@ __all__ = [
     "dump_memory",
     "execution_trace",
     "find_oep_candidate",
+    "inspect_heap",
     "resolve_pie_base",
     "run_two_stage",
     "run_two_stage_shell",
