@@ -482,6 +482,22 @@ async def binary_auto_fmt_leak(
     return await run_in_threadpool(service.auto_fmt_leak_pie, data)
 
 
+@router.post("/{sha256}/auto-srop")
+async def binary_auto_srop(
+    sha256: str,
+    offset: int = Query(..., ge=0, le=1_048_576),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """자동 SROP(sigreturn) 익스: syscall + pop rax + /bin/sh 로 execve 셸 증명.
+
+    pop rdi/rsi/rdx 가젯이 부족한 경우에 유용하다(non-PIE amd64). 신뢰할 수 없는
+    바이너리를 실행하므로 기본 비활성 — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.auto_srop, data, offset=offset)
+
+
 @router.post("/{sha256}/auto-orw")
 async def binary_auto_orw(
     sha256: str,

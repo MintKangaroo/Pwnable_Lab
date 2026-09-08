@@ -79,6 +79,7 @@ from pwnable_lab.sandbox.runner import (
     verify_shell,
 )
 from pwnable_lab.sandbox.runtime_strings import runtime_strings
+from pwnable_lab.sandbox.srop import auto_srop as auto_srop_core
 from pwnable_lab.sandbox.trace import execution_trace
 from pwnable_lab.sandbox.unpack import unpack_upx
 
@@ -116,6 +117,7 @@ __all__ = [
     "auto_ret2system_pie_in_container",
     "auto_ret2win_pie_core",
     "auto_ret2win_pie_in_container",
+    "auto_srop_core",
     "confirm_offset_in_container",
     "confirm_offset_in_process",
     "confirm_return_offset",

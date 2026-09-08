@@ -1020,6 +1020,24 @@ def orw_plan(image: ElfImage) -> dict | None:
     }
 
 
+def srop_plan(image: ElfImage) -> dict | None:
+    """amd64 SROP 재료(pop rax·syscall 가젯·/bin/sh)를 정적으로 수집.
+
+    sigreturn(rax=15) 으로 임의 레지스터를 세팅해 execve("/bin/sh") 를 부른다. rax 를
+    15/59 로 만들 ``pop rax`` 가젯 + ``syscall`` 가젯 + ``/bin/sh`` 문자열을 모두 찾으면
+    ``{"pop_rax", "syscall", "binsh"}`` 를, 하나라도 없으면 None. 32-bit 는 대상 아님.
+    """
+
+    if (image.bits or 64) != 64:
+        return None
+    pop_rax = find_clean_pop(image, "rax")
+    syscall = find_syscall_gadget(image)
+    binsh = find_binsh(image)
+    if pop_rax is None or syscall is None or binsh is None:
+        return None
+    return {"pop_rax": pop_rax, "syscall": syscall, "binsh": binsh}
+
+
 def _system_address(image: ElfImage) -> int | None:
     """system 의 호출 가능 주소(비 PIE): PLT stub 우선, 없으면 정의된 심볼."""
 
