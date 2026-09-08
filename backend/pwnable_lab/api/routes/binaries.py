@@ -228,6 +228,16 @@ def binary_packing(
     return service.packing(repo.load_bytes(sha256))
 
 
+@router.get("/{sha256}/seccomp")
+def binary_seccomp(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """seccomp-BPF 필터 정적 분석(실행 없음): 허용/차단 syscall·execve 차단·ORW 가능성."""
+    return service.seccomp(repo.load_bytes(sha256))
+
+
 @router.post("/{sha256}/runtime-strings")
 async def binary_runtime_strings(
     sha256: str,
