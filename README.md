@@ -596,7 +596,9 @@ Pwnable_Lab/
   로 크로스아키텍처 **시스템콜 트레이스**도 반환), (4) 지정 시점(브레이크포인트/N 스텝)의
   **프로세스 메모리 스냅샷 덤프**(`sandbox.memdump`, `POST /binaries/{sha}/memdump`;
   쓰기 가능/코드/전체 영역별 바이트·SHA-256·엔트로피 — 언패킹·복호화된 프로세스
-  이미지 재구성용). 후속: QEMU full-system·rr 기록/재생
+  이미지 재구성용). **프론트 ELF Workspace 에 Dynamic Analysis 탭**(패킹 탐지·UPX
+  언패킹·런타임 strings·OEP·실행 트레이스·메모리 덤프·QEMU 실행 카드)으로 6C/6D 전
+  엔드포인트 노출. 후속: QEMU full-system·rr 기록/재생
 - Phase 7: 프라이버시 제어 LLM provider 추상화 — **구현(기본 차단)**: 기본 provider 는
   `null`(어떤 데이터도 외부로 나가지 않음). `PLAB_LLM_ENABLED=1` + `PLAB_LLM_PROVIDER`
   로 켤 때만 **정적 전략 요약 텍스트**(바이너리 원본이 아님)를 provider 에 보내 자연어

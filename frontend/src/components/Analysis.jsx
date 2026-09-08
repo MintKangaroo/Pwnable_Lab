@@ -33,6 +33,7 @@ const tabsForFormat = (format) => {
       ['strategy', 'Exploit Strategy'],
       ['exploit-runner', 'Exploit Runner'],
       ['debugger-ws', 'Live Debugger'],
+      ['dynamic', 'Dynamic Analysis'],
       ['ghidra', 'Ghidra'],
       COMMON_TABS[4],
     ];
@@ -2719,6 +2720,370 @@ function LiveDebugger({ sha }) {
   );
 }
 
+function _hexOrUndef(value) {
+  const t = String(value || '').trim();
+  if (!t) return undefined;
+  const n = Number.parseInt(t, 16);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function _intOrUndef(value) {
+  const t = String(value || '').trim();
+  if (!t) return undefined;
+  const n = Number.parseInt(t, 10);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function DynamicAnalysis({ sha }) {
+  // 패킹/언패킹/런타임 strings/OEP/트레이스/메모리 덤프/QEMU 크로스아치 실행.
+  const [packState, runPack] = useSandboxAction(() => api.packing(sha));
+  const [unpackState, runUnpack] = useSandboxAction(() => api.unpack(sha));
+  const [rsState, runRs] = useSandboxAction((bp, steps) =>
+    api.runtimeStrings(sha, { breakpoint: bp, steps }),
+  );
+  const [oepState, runOep] = useSandboxAction((start, ms) => api.oep(sha, start, ms));
+  const [traceState, runTrace] = useSandboxAction((start, ms) =>
+    api.trace(sha, start, ms),
+  );
+  const [dumpState, runDump] = useSandboxAction((bp, steps, select) =>
+    api.memdump(sha, { breakpoint: bp, steps, select }),
+  );
+  const [qemuState, runQemu] = useSandboxAction((stdin, strace) =>
+    api.qemuRun(sha, { stdin, strace }),
+  );
+
+  const [rsBp, setRsBp] = useState('');
+  const [rsSteps, setRsSteps] = useState('');
+  const [oepStart, setOepStart] = useState('');
+  const [traceStart, setTraceStart] = useState('');
+  const [dumpBp, setDumpBp] = useState('');
+  const [dumpSteps, setDumpSteps] = useState('');
+  const [dumpSelect, setDumpSelect] = useState('writable');
+  const [qemuStdin, setQemuStdin] = useState('');
+  const [qemuStrace, setQemuStrace] = useState(false);
+
+  return (
+    <div className="strategy-workspace runner-workspace">
+      <section className="strategy-intro">
+        <div className="section-heading">
+          <h3>Dynamic Analysis</h3>
+          <span className="verification verification-inferred">
+            패킹 · 언패킹 · 런타임 · 트레이스 · 크로스아키텍처
+          </span>
+        </div>
+        <p className="strategy-disclaimer">
+          패킹 정적 탐지 외에는 격리 샌드박스에서 <strong>실제로 실행</strong>합니다.
+          실행 기능은 서버에서 명시적으로 켠 배포에서만 동작합니다(아니면 503).
+        </p>
+      </section>
+
+      {/* 패킹 정적 탐지 (실행 없음) */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>패킹 / 난독화 탐지</h3>
+          <span>UPX 서명 · 엔트로피 · 오버레이 (정적, 실행 없음)</span>
+        </div>
+        <button
+          className="button secondary"
+          disabled={packState.status === 'running'}
+          onClick={() => runPack()}
+        >
+          탐지 실행
+        </button>
+        <RunnerResult state={packState} />
+        {packState.status === 'done' && (
+          <div>
+            <p className="runner-kv">
+              <span>결과</span>
+              <strong>
+                <Badge tone={packState.result.packed ? 'danger' : 'green'}>
+                  {packState.result.packed ? '패킹 의심' : '비패킹'}
+                </Badge>{' '}
+                {packState.result.packer ? `· ${packState.result.packer}` : ''} · 확신도{' '}
+                {String(packState.result.confidence)}
+              </strong>
+            </p>
+            {(packState.result.signals || []).map((s) => (
+              <p key={s.name} className="runner-kv">
+                <span>{s.name}</span>
+                <strong>{s.detail}</strong>
+              </p>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* UPX 언패킹 */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>UPX 언패킹</h3>
+          <span>upx -d 로 복원 (실행 없음)</span>
+        </div>
+        <button
+          className="button secondary"
+          disabled={unpackState.status === 'running'}
+          onClick={() => runUnpack()}
+        >
+          언패킹 실행
+        </button>
+        <RunnerResult state={unpackState} />
+        {unpackState.status === 'done' && (
+          <p className="runner-kv">
+            <span>결과</span>
+            <strong>
+              {unpackState.result.attempted ? (
+                unpackState.result.unpacked ? (
+                  <>
+                    <SuccessBadge ok /> {String(unpackState.result.original_size)} →{' '}
+                    {String(unpackState.result.unpacked_size)} bytes
+                  </>
+                ) : (
+                  `실패 (${String(unpackState.result.reason)})`
+                )
+              ) : (
+                `미시도 (${String(unpackState.result.reason)})`
+              )}
+            </strong>
+          </p>
+        )}
+      </section>
+
+      {/* 런타임 strings */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>런타임 strings</h3>
+          <span>실행 중 메모리의 (복호화된) 문자열</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            breakpoint (hex)
+            <input value={rsBp} onChange={(e) => setRsBp(e.target.value)} />
+          </label>
+          <label className="runner-field">
+            steps
+            <input
+              type="number"
+              value={rsSteps}
+              onChange={(e) => setRsSteps(e.target.value)}
+            />
+          </label>
+          <button
+            className="button secondary"
+            disabled={rsState.status === 'running'}
+            onClick={() => runRs(_hexOrUndef(rsBp), _intOrUndef(rsSteps))}
+          >
+            발굴
+          </button>
+        </div>
+        <RunnerResult state={rsState} />
+        {rsState.status === 'done' && rsState.result.attempted && (
+          <div>
+            <p className="runner-kv">
+              <span>런타임 전용</span>
+              <strong>{String(rsState.result.runtime_only_count)} 개</strong>
+            </p>
+            <pre className="dbg-stack">
+              <code>{(rsState.result.runtime_only || []).slice(0, 40).join('\n')}</code>
+            </pre>
+          </div>
+        )}
+      </section>
+
+      {/* OEP 후보 */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>OEP 후보</h3>
+          <span>쓰기 가능·익명 실행으로의 tail jump</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            start (hex, 선택)
+            <input value={oepStart} onChange={(e) => setOepStart(e.target.value)} />
+          </label>
+          <button
+            className="button secondary"
+            disabled={oepState.status === 'running'}
+            onClick={() => runOep(_hexOrUndef(oepStart), undefined)}
+          >
+            탐지
+          </button>
+        </div>
+        <RunnerResult state={oepState} />
+        {oepState.status === 'done' && (
+          <p className="runner-kv">
+            <span>OEP</span>
+            <strong>
+              {oepState.result.oep_candidate ? (
+                <>
+                  <code>{String(oepState.result.oep_candidate)}</code> ·{' '}
+                  {oepState.result.region?.perms} ({String(oepState.result.steps)}{' '}
+                  steps)
+                </>
+              ) : (
+                `없음 (${String(oepState.result.reason)})`
+              )}
+            </strong>
+          </p>
+        )}
+      </section>
+
+      {/* 실행 트레이스 */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>실행 트레이스</h3>
+          <span>바이너리 자체 코드 범위 명령 주소 (rr-lite)</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            start (hex, 선택)
+            <input value={traceStart} onChange={(e) => setTraceStart(e.target.value)} />
+          </label>
+          <button
+            className="button secondary"
+            disabled={traceState.status === 'running'}
+            onClick={() => runTrace(_hexOrUndef(traceStart), undefined)}
+          >
+            트레이스
+          </button>
+        </div>
+        <RunnerResult state={traceState} />
+        {traceState.status === 'done' && traceState.result.attempted && (
+          <div>
+            <p className="runner-kv">
+              <span>스텝 / 고유주소</span>
+              <strong>
+                {String(traceState.result.steps)} /{' '}
+                {String(traceState.result.unique_addresses)}
+              </strong>
+            </p>
+            <pre className="dbg-stack">
+              <code>{(traceState.result.trace || []).slice(0, 40).join(' ')}</code>
+            </pre>
+          </div>
+        )}
+      </section>
+
+      {/* 메모리 덤프 */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>메모리 덤프</h3>
+          <span>매핑 영역 바이트·엔트로피 스냅샷 (재구성)</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            breakpoint (hex)
+            <input value={dumpBp} onChange={(e) => setDumpBp(e.target.value)} />
+          </label>
+          <label className="runner-field">
+            steps
+            <input
+              type="number"
+              value={dumpSteps}
+              onChange={(e) => setDumpSteps(e.target.value)}
+            />
+          </label>
+          <label className="runner-field">
+            영역
+            <select value={dumpSelect} onChange={(e) => setDumpSelect(e.target.value)}>
+              <option value="writable">writable</option>
+              <option value="code">code</option>
+              <option value="all">all</option>
+            </select>
+          </label>
+          <button
+            className="button secondary"
+            disabled={dumpState.status === 'running'}
+            onClick={() =>
+              runDump(_hexOrUndef(dumpBp), _intOrUndef(dumpSteps), dumpSelect)
+            }
+          >
+            덤프
+          </button>
+        </div>
+        <RunnerResult state={dumpState} />
+        {dumpState.status === 'done' && dumpState.result.attempted && (
+          <div>
+            <p className="runner-kv">
+              <span>영역 / 캡처</span>
+              <strong>
+                {String(dumpState.result.region_count)} 영역 ·{' '}
+                {String(dumpState.result.captured_bytes)} bytes
+              </strong>
+            </p>
+            {(dumpState.result.regions || []).slice(0, 12).map((r) => (
+              <p key={r.start} className="runner-kv">
+                <span>
+                  <code>{r.start}</code> {r.perms}
+                </span>
+                <strong>
+                  {String(r.captured)} B · H={String(r.entropy)}
+                </strong>
+              </p>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* QEMU 크로스아키텍처 실행 */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>QEMU 실행 (크로스아키텍처)</h3>
+          <span>ARM/MIPS 등 다른 아키텍처 바이너리 실행</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            stdin
+            <input value={qemuStdin} onChange={(e) => setQemuStdin(e.target.value)} />
+          </label>
+          <label className="runner-check">
+            <input
+              type="checkbox"
+              checked={qemuStrace}
+              onChange={(e) => setQemuStrace(e.target.checked)}
+            />
+            strace
+          </label>
+          <button
+            className="button secondary"
+            disabled={qemuState.status === 'running'}
+            onClick={() => runQemu(qemuStdin, qemuStrace)}
+          >
+            실행
+          </button>
+        </div>
+        <RunnerResult state={qemuState} />
+        {qemuState.status === 'done' && (
+          <div>
+            <p className="runner-kv">
+              <span>결과</span>
+              <strong>
+                {qemuState.result.attempted ? (
+                  <>
+                    {String(qemuState.result.arch)} · exit{' '}
+                    {String(qemuState.result.exit_code)}
+                  </>
+                ) : (
+                  `미시도 (${String(qemuState.result.reason)})`
+                )}
+              </strong>
+            </p>
+            {qemuState.result.stdout && (
+              <pre className="shell-term">
+                <code>{qemuState.result.stdout}</code>
+              </pre>
+            )}
+            {qemuState.result.syscalls && (
+              <pre className="dbg-stack">
+                <code>{qemuState.result.syscalls.slice(0, 40).join('\n')}</code>
+              </pre>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function GhidraView({ sha }) {
   const [state, run] = useSandboxAction(() => api.analyzeGhidra(sha));
   const [openFn, setOpenFn] = useState(null);
@@ -3058,6 +3423,7 @@ export function Analysis({
           {tab === 'strategy' && <Strategy sha={sha} />}
           {tab === 'exploit-runner' && <ExploitRunner sha={sha} />}
           {tab === 'debugger-ws' && <LiveDebugger sha={sha} />}
+          {tab === 'dynamic' && <DynamicAnalysis sha={sha} />}
           {tab === 'ghidra' && <GhidraView sha={sha} />}
           {tab === 'symbols' && <Symbols info={info} />}
           {tab === 'strings' && <Strings sha={sha} />}

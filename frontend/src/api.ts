@@ -378,6 +378,40 @@ export const api = {
     postJSON<Record<string, unknown>>(`/binaries/${sha}/debug`, { commands }),
   explainStrategy: (sha: string) =>
     postJSON<Record<string, unknown>>(`/binaries/${sha}/explain-strategy`, {}),
+  // Phase 6C/6D dynamic analysis — 대부분 opt-in 샌드박스 실행(비활성 시 503).
+  packing: (sha: string) =>
+    request<Record<string, unknown>>(`/binaries/${sha}/packing`),
+  unpack: (sha: string) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/unpack`),
+  oep: (sha: string, start?: number, maxSteps?: number) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/oep`, {
+      start,
+      max_steps: maxSteps,
+    }),
+  trace: (sha: string, start?: number, maxSteps?: number) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/trace`, {
+      start,
+      max_steps: maxSteps,
+    }),
+  memdump: (
+    sha: string,
+    opts: { breakpoint?: number; steps?: number; select?: string },
+  ) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/memdump`, {
+      breakpoint: opts.breakpoint,
+      steps: opts.steps,
+      select: opts.select,
+    }),
+  qemuRun: (sha: string, opts: { stdin?: string; strace?: boolean }) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/qemu-run`, {
+      stdin: opts.stdin,
+      strace: opts.strace ? 'true' : undefined,
+    }),
+  runtimeStrings: (sha: string, opts: { breakpoint?: number; steps?: number }) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/runtime-strings`, {
+      breakpoint: opts.breakpoint,
+      steps: opts.steps,
+    }),
   cfg: (sha: string, address: number | string) =>
     request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}/cfg`),
   xrefs: (
