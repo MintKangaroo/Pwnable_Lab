@@ -49,29 +49,42 @@ def inspect_heap(
         stopped = _advance(session, breakpoint, steps)
         if stopped.get("error"):
             return {"attempted": False, "reason": stopped["error"]}
-
-        heap = next((m for m in session.maps() if m["path"] == "[heap]"), None)
-        if heap is None:
-            return {"attempted": False, "reason": "no-heap", "stopped": stopped}
-        base, end = heap["start"], heap["end"]
-        blob = session.read_region(base, min(end - base, 1 << 20))
-
-        chunks = _walk_chunks(base, blob, max_chunks)
-        tcache = _parse_tcache(base, blob)
-        free_chunks = _free_chunks(base, blob, chunks)
-        arena = _read_arena(session, base, end, free_chunks)
-        return {
-            "attempted": True,
-            "heap": {"start": f"0x{base:x}", "end": f"0x{end:x}"},
-            "stopped": stopped,
-            "chunk_count": len(chunks),
-            "chunks": chunks,
-            "tcache": tcache,
-            "free_chunks": free_chunks,
-            "arena": arena,
-        }
+        result = inspect_heap_session(session, max_chunks=max_chunks)
+        if not result.get("attempted"):
+            result["stopped"] = stopped
+            return result
+        result["stopped"] = stopped
+        return result
     finally:
         session.close()
+
+
+def inspect_heap_session(session: DebugSession, *, max_chunks: int = 256) -> dict:
+    """이미 정지한 세션에서 힙 청크·tcache·free 청크·arena 상태를 파싱한다.
+
+    :func:`inspect_heap` 이 실행 제어를 담당하고, 상태 파싱은 이 함수가 담당한다
+    (heap 익스 primitive 증명 등에서 진행 중인 세션에 재사용).
+    """
+
+    heap = next((m for m in session.maps() if m["path"] == "[heap]"), None)
+    if heap is None:
+        return {"attempted": False, "reason": "no-heap"}
+    base, end = heap["start"], heap["end"]
+    blob = session.read_region(base, min(end - base, 1 << 20))
+
+    chunks = _walk_chunks(base, blob, max_chunks)
+    tcache = _parse_tcache(base, blob)
+    free_chunks = _free_chunks(base, blob, chunks)
+    arena = _read_arena(session, base, end, free_chunks)
+    return {
+        "attempted": True,
+        "heap": {"start": f"0x{base:x}", "end": f"0x{end:x}"},
+        "chunk_count": len(chunks),
+        "chunks": chunks,
+        "tcache": tcache,
+        "free_chunks": free_chunks,
+        "arena": arena,
+    }
 
 
 def _walk_chunks(base: int, blob: bytes, max_chunks: int) -> list[dict]:
@@ -280,4 +293,4 @@ def _advance(session: DebugSession, breakpoint: int | None, steps: int) -> dict:
     return event.as_dict() if event is not None else {"reason": "exec-stop"}
 
 
-__all__ = ["inspect_heap"]
+__all__ = ["inspect_heap", "inspect_heap_session"]

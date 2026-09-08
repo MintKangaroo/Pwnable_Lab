@@ -49,7 +49,13 @@ from pwnable_lab.sandbox.gate import (
     require_sandbox_boundary,
     require_sandbox_enabled,
 )
-from pwnable_lab.sandbox.heap import inspect_heap
+from pwnable_lab.sandbox.heap import inspect_heap, inspect_heap_session
+from pwnable_lab.sandbox.heap_exploit import (
+    build_poison_plan,
+    detect_double_free,
+    prove_tcache_poison,
+    tcache_poison_fd,
+)
 from pwnable_lab.sandbox.memdump import dump_memory
 from pwnable_lab.sandbox.oep import find_oep_candidate
 from pwnable_lab.sandbox.orw import auto_orw as auto_orw_core
@@ -120,13 +126,18 @@ __all__ = [
     "auto_ret2win_pie_core",
     "auto_ret2win_pie_in_container",
     "auto_srop_core",
+    "build_poison_plan",
     "confirm_offset_in_container",
     "confirm_offset_in_process",
     "confirm_return_offset",
+    "detect_double_free",
     "dump_memory",
     "execution_trace",
     "find_oep_candidate",
     "inspect_heap",
+    "inspect_heap_session",
+    "prove_tcache_poison",
+    "tcache_poison_fd",
     "resolve_pie_base",
     "run_two_stage",
     "run_two_stage_shell",

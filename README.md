@@ -379,6 +379,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/info` | format-aware 정규화 정보 |
 | `GET` | `/binaries/{binary_id}/elf` | Phase 2 ELF metadata 계약 |
 | `GET` | `/binaries/{binary_id}/pe` | PE32/PE32+ metadata; non-PE는 거부 |
+| `POST` | `/binaries/{binary_id}/heap/tcache-poison` | tcache poisoning 실측 증명(fd 오염→임의 할당); 실행 게이트(503 가능) |
 | `POST` | `/binaries/{binary_id}/pe-run` | PE 동적 실행(wine): stdout/exit·Windows 예외 관측; 실행 게이트(503 가능) |
 | `GET` | `/binaries/{binary_id}/checksec` | 보호 기법 |
 | `GET` | `/binaries/{binary_id}/symbols` | 종류별 paginated symbol |
@@ -643,6 +644,15 @@ Pwnable_Lab/
   rlimit·프로세스그룹 종료·wall-clock 로 바운딩(RLIMIT_AS 미설정 — wine 이 큰
   주소공간 예약). 실 zig 빌드 PE(정상·stdin 왕복·널 역참조 크래시)로 실측
   (`sandbox.pe_dynamic`, `POST /binaries/{sha}/pe-run`). wine 부재 시 attempted=False
+- tcache poisoning 익스 빌더(`heap/tcache-poison`) — **구현(opt-in)**: heap 익스
+  primitive 를 계산하고 **실측 증명**한다. `tcache_poison_fd`(safe-linking 인지,
+  `(fd_addr>>12)^target`)로 오염값을 계산하고, `build_poison_plan` 이 힙 상태+목표에서
+  malloc 시퀀스·오염값·pwntools 스켈레톤을 만든다. `prove_tcache_poison` 은 골든
+  바이너리를 실행해 tcache head 의 fd 를 target 으로 패치한 뒤, 두 번의 malloc 이
+  target 을 반환하고 프로그램이 그곳에 마커를 쓰는지 확인해 **임의 할당을 실제 실행으로
+  증명**한다. `detect_double_free` 는 tcache/fastbin 체인의 중복을 탐지
+  (`sandbox.heap_exploit`, `POST /binaries/{sha}/heap/tcache-poison`). 실 gcc 바이너리
+  로 poison→"PWNED!" 쓰기까지 실측
 - 힙 인스펙터(`heap`) — **구현(opt-in)**: heap 챌린지(tcache poisoning·UAF·
   double-free)를 위해 실행 중 glibc 힙을 파싱한다. ptrace 디버거로 대상을 브레이크
   포인트/N 스텝까지 실행한 뒤 `[heap]` 청크를 size 필드로 순회(첫 청크=tcache
