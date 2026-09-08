@@ -34,6 +34,10 @@ from pwnable_lab.analyzer.ghidra_insights import (
     overflow_insights,
 )
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
+from pwnable_lab.analyzer.libc_id import (
+    libc_fingerprint,
+    resolve_from_leak,
+)
 from pwnable_lab.analyzer.llm import LLMProvider, build_provider
 from pwnable_lab.analyzer.one_gadget import find_one_gadgets
 from pwnable_lab.analyzer.packing import detect_packing
@@ -320,6 +324,33 @@ class AnalysisService:
             return {"format": "unsupported", "packed": False, "signals": []}
         result = detect_packing(parse_elf(data)).as_dict()
         result["format"] = "ELF"
+        return result
+
+    def libc_identify(self, data: bytes) -> dict:
+        """libc 버전 식별/지문(실행 없음): 버전·build-id·핵심 심볼 오프셋·/bin/sh.
+
+        원격 ret2libc 를 위해 libc 파일의 지문을 만든다. ELF 만 대상.
+        """
+
+        if detect_format(data) is not ArtifactFormat.ELF:
+            return {"format": "unsupported"}
+        result = libc_fingerprint(parse_elf(data)).as_dict()
+        result["format"] = "ELF"
+        return result
+
+    def libc_resolve(self, data: bytes, *, symbol: str, leaked: int) -> dict:
+        """유출된 심볼 주소로 libc base·핵심 심볼 런타임 주소를 계산한다(실행 없음).
+
+        ``base = leaked - offset(symbol)``. 하위 12비트가 안 맞으면(그 libc 가 아님)
+        ``consistent=false``. 심볼이 지문에 없으면 ``reason=unknown-symbol``.
+        """
+
+        if detect_format(data) is not ArtifactFormat.ELF:
+            return {"format": "unsupported"}
+        fingerprint = libc_fingerprint(parse_elf(data))
+        result = resolve_from_leak(fingerprint, symbol, leaked)
+        if result is None:
+            return {"consistent": False, "reason": "unknown-symbol", "symbol": symbol}
         return result
 
     def one_gadget(self, data: bytes) -> dict:
