@@ -259,6 +259,17 @@ class DebugSession:
         finally:
             os.close(fd)
 
+    def write_word(self, addr: int, value: int) -> bool:
+        """``addr`` 에 8바이트 워드를 쓴다(정지 상태). 성공 여부 반환.
+
+        heap 익스 primitive(tcache/fastbin fd 오염 등)를 실측 증명할 때, 정지한
+        대상 메모리를 직접 패치하는 데 쓴다.
+        """
+
+        if not self._alive:
+            return False
+        return self._poke(addr, value)
+
     # --- 브레이크포인트 ----------------------------------------------------
 
     def set_breakpoint(self, addr: int) -> bool:

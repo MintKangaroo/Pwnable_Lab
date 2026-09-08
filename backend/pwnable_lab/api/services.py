@@ -106,6 +106,7 @@ from pwnable_lab.sandbox import (
     execution_trace,
     find_oep_candidate,
     inspect_heap,
+    prove_tcache_poison,
     require_isolation_marker,
     require_sandbox_enabled,
     run_debug_script,
@@ -1407,6 +1408,46 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return inspect_heap(path, breakpoint=breakpoint, steps=steps, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def heap_tcache_poison(
+        self,
+        data: bytes,
+        *,
+        patch_break: int,
+        verify_break: int,
+        target_addr: int,
+        tcache_size: int,
+    ) -> dict:
+        """tcache poisoning 을 실측 증명한다(fd 패치→임의 할당→target 쓰기 확인).
+
+        ``patch_break`` 에서 tcache head fd 를 target 으로 오염하고 ``verify_break``
+        에서 target 메모리를 읽어 임의 할당 성공을 증명한다. 신뢰할 수 없는 바이너리를
+        **실행**하므로 마스터 게이트+격리 마커를 강제한다(in-process). 기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Heap tcache poison")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return prove_tcache_poison(
+                path,
+                patch_break=patch_break,
+                verify_break=verify_break,
+                target_addr=target_addr,
+                tcache_size=tcache_size,
+                limits=limits,
+            )
         finally:
             try:
                 os.unlink(path)

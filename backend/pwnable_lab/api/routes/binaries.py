@@ -377,6 +377,32 @@ async def binary_heap(
     )
 
 
+@router.post("/{sha256}/heap/tcache-poison")
+async def binary_heap_tcache_poison(
+    sha256: str,
+    patch_break: int = Query(ge=0, le=0xFFFFFFFFFFFF),
+    verify_break: int = Query(ge=0, le=0xFFFFFFFFFFFF),
+    target_addr: int = Query(ge=0, le=0xFFFFFFFFFFFF),
+    tcache_size: int = Query(ge=0x20, le=0x410),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """tcache poisoning 실측 증명: patch_break 에서 fd 오염→verify_break 에서 임의 할당 확인.
+
+    heap 익스 primitive(safe-linking 인지)를 실제 실행으로 검증한다. 신뢰할 수 없는
+    바이너리를 실행하므로 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.heap_tcache_poison,
+        data,
+        patch_break=patch_break,
+        verify_break=verify_break,
+        target_addr=target_addr,
+        tcache_size=tcache_size,
+    )
+
+
 @router.post("/{sha256}/pe-run")
 async def binary_pe_run(
     sha256: str,
