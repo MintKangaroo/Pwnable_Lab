@@ -635,6 +635,12 @@ Pwnable_Lab/
   `syscall` 이 오는 지점을 잡아 **libc base 상대 오프셋 + 제약(rsi/rdx NULL 여부)**
   을 보고(`analyzer.one_gadget`, `GET /binaries/{sha}/one-gadget`). ret2libc 를 한
   가젯으로 간소화. 실 시스템 libc 로 실측 검증(구조 대조)
+- 힙 인스펙터(`heap`) — **구현(opt-in)**: heap 챌린지(tcache poisoning·UAF·
+  double-free)를 위해 실행 중 glibc 힙을 파싱한다. ptrace 디버거로 대상을 브레이크
+  포인트/N 스텝까지 실행한 뒤 `[heap]` 청크를 size 필드로 순회(첫 청크=tcache
+  perthread struct 표시)하고, tcache bin 카운트·free-list 헤드를 파싱
+  (`sandbox.heap`, `POST /binaries/{sha}/heap`; pwndbg heap/bins 축약, safe-linking
+  인지). 실 gcc 바이너리(malloc/free)로 실측
 - libc 버전 식별/지문(`libc-id`) — **구현(실행 없음)**: libc 파일에서 버전 문자열·
   build-id·핵심 심볼 오프셋·`/bin/sh` 를 뽑아 지문화(`analyzer.libc_id`, `GET
   /binaries/{sha}/libc-id`). 원격 ret2libc 에서 유출한 심볼 주소로 libc base 와 다른

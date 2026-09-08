@@ -358,6 +358,25 @@ async def binary_trace(
     )
 
 
+@router.post("/{sha256}/heap")
+async def binary_heap(
+    sha256: str,
+    breakpoint: int | None = Query(default=None, ge=0, le=0xFFFFFFFFFFFF),
+    steps: int = Query(default=0, ge=0, le=1_000_000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """실행 중 glibc 힙 청크·tcache 파싱(heap 익스 보조): 청크 레이아웃·tcache bin 상태.
+
+    브레이크포인트/N 스텝 시점의 `[heap]` 를 순회한다. 신뢰할 수 없는 바이너리를
+    실행하므로 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(
+        service.heap_inspect, data, breakpoint=breakpoint, steps=steps
+    )
+
+
 @router.post("/{sha256}/memdump")
 async def binary_memdump(
     sha256: str,
