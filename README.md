@@ -646,9 +646,13 @@ Pwnable_Lab/
 - 힙 인스펙터(`heap`) — **구현(opt-in)**: heap 챌린지(tcache poisoning·UAF·
   double-free)를 위해 실행 중 glibc 힙을 파싱한다. ptrace 디버거로 대상을 브레이크
   포인트/N 스텝까지 실행한 뒤 `[heap]` 청크를 size 필드로 순회(첫 청크=tcache
-  perthread struct 표시)하고, tcache bin 카운트·free-list 헤드를 파싱
-  (`sandbox.heap`, `POST /binaries/{sha}/heap`; pwndbg heap/bins 축약, safe-linking
-  인지). 실 gcc 바이너리(malloc/free)로 실측
+  perthread struct 표시, 각 청크 `in_use`=다음 청크 PREV_INUSE)하고, tcache bin
+  카운트·free-list 헤드를 파싱. 나아가 PREV_INUSE 로 감지되는 free 청크
+  (unsorted/small/large)의 fd/bk 를 읽어 **main_arena 를 힙만으로 복구**
+  (unsorted fd = `bin_at(1)` = main_arena+0x60)하고, `fastbinsY`·top·last_remainder
+  를 읽어 fastbin 체인(safe-linking 역산)까지 보고한다(`sandbox.heap`,
+  `POST /binaries/{sha}/heap`; pwndbg heap/bins 축약). 실 gcc 바이너리(tcache 7·
+  fastbin 2·unsorted 1 스냅샷)로 실측
 - libc 버전 식별/지문(`libc-id`) — **구현(실행 없음)**: libc 파일에서 버전 문자열·
   build-id·핵심 심볼 오프셋·`/bin/sh` 를 뽑아 지문화(`analyzer.libc_id`, `GET
   /binaries/{sha}/libc-id`). 원격 ret2libc 에서 유출한 심볼 주소로 libc base 와 다른
