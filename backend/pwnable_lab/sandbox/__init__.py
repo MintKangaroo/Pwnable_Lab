@@ -52,6 +52,7 @@ from pwnable_lab.sandbox.gate import (
 from pwnable_lab.sandbox.memdump import dump_memory
 from pwnable_lab.sandbox.oep import find_oep_candidate
 from pwnable_lab.sandbox.orw import auto_orw as auto_orw_core
+from pwnable_lab.sandbox.orw import auto_orw_pie as auto_orw_pie_core
 from pwnable_lab.sandbox.pie import auto_execve_pie as auto_execve_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2system_pie as auto_ret2system_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2win_pie as auto_ret2win_pie_core
@@ -102,6 +103,7 @@ __all__ = [
     "auto_fmt_leak_pie_core",
     "auto_fmt_leak_pie_in_container",
     "auto_orw_core",
+    "auto_orw_pie_core",
     "auto_ret2libc_core",
     "auto_ret2libc_in_container",
     "auto_ret2system32_core",

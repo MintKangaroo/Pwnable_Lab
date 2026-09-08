@@ -82,6 +82,7 @@ from pwnable_lab.sandbox import (
     auto_fmt_leak_pie_core,
     auto_fmt_leak_pie_in_container,
     auto_orw_core,
+    auto_orw_pie_core,
     auto_ret2libc_core,
     auto_ret2libc_in_container,
     auto_ret2system32_core,
@@ -1001,6 +1002,7 @@ class AnalysisService:
         flag_path: str,
         read_size: int = 100,
         expect_marker: str | None = None,
+        pie: bool = False,
     ) -> dict:
         """ORW(open→read→write) syscall ROP 자동 구성·실행로 플래그 유출을 증명한다.
 
@@ -1018,9 +1020,10 @@ class AnalysisService:
             cpu_seconds=self.settings.sandbox_cpu_seconds,
             address_space_bytes=self.settings.sandbox_address_space_bytes,
         )
+        core = auto_orw_pie_core if pie else auto_orw_core
         path = self._materialize(data)
         try:
-            return auto_orw_core(
+            return core(
                 path,
                 offset=offset,
                 flag_path=flag_path,
