@@ -377,6 +377,23 @@ async def binary_heap(
     )
 
 
+@router.post("/{sha256}/pe-run")
+async def binary_pe_run(
+    sha256: str,
+    stdin_hex: str | None = Query(default=None, max_length=1_000_000),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """PE 를 wine 으로 실행해 stdout/stderr·종료코드·Windows 예외를 관측(PE 동적 분석).
+
+    정적 PE 분석의 동적 짝. `stdin_hex` 로 표준입력을 hex 로 넘길 수 있다. 신뢰할 수
+    없는 PE 를 실행하므로 기본 비활성(샌드박스 실행 게이트) — 503 가능. wine 부재 시
+    attempted=False.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.pe_dynamic_run, data, stdin_hex=stdin_hex)
+
+
 @router.post("/{sha256}/memdump")
 async def binary_memdump(
     sha256: str,
