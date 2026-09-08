@@ -250,6 +250,20 @@ def binary_libc_resolve(
     return service.libc_resolve(repo.load_bytes(sha256), symbol=symbol, leaked=leaked)
 
 
+@router.get("/{sha256}/ret2dlresolve")
+def binary_ret2dlresolve(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """ret2dlresolve 위조 구조체·reloc_arg 정적 생성(실행 없음, non-PIE 지연바인딩).
+
+    leak 없이 system 을 해석하는 위조 Elf64_Sym/Rela/문자열 blob 과 reloc 인덱스를
+    만든다. glibc 2.34+ 는 하드닝되어 실제 셸 획득은 성립하지 않을 수 있다(구조체는 정확).
+    """
+    return service.ret2dlresolve(repo.load_bytes(sha256))
+
+
 @router.get("/{sha256}/one-gadget")
 def binary_one_gadget(
     sha256: str,

@@ -621,6 +621,14 @@ Pwnable_Lab/
   체인을 만들고, 샌드박스에서 실행해 **플래그 내용이 유출되는지로 성공을 증명**
   (셸 획득이 아니라 플래그 유출). non-PIE amd64. **PIE 는 로드 base 를 로컬 관측
   (ASLR-off)해 rebase**(`auto-orw?pie=true`, `aslr="disabled-for-local-proof"`)
+- ret2dlresolve 위조 구조체 생성(`ret2dlresolve`) — **구현(실행 없음)**: leak 없이
+  동적 링커 지연 해석을 악용해 임의 심볼(system)을 해석하는 위조 `Elf64_Sym`/`Elf64_Rela`
+  /문자열 뭉치와 `.plt[0]` 에 넘길 reloc 인덱스를 자동 생성(`payload.ret2dlresolve`,
+  `analyzer.strategy.ret2dlresolve_plan`, `GET /binaries/{sha}/ret2dlresolve`). 정렬
+  (dynsym/JMPREL 24바이트)을 자동으로 맞춰 `sym_index`/`reloc_arg` 를 정수로 만든다.
+  non-PIE 지연바인딩 대상. **정직성: glibc 2.34+ 는 심볼 버전 검사로 고전 기법을
+  하드닝**하므로 실제 셸 획득은 대상 libc 버전에 따라 성립하지 않을 수 있다(구조체는
+  정확히 생성 — pwntools Ret2dlresolvePayload 와 동형)
 - one_gadget 정적 탐지(`one-gadget`) — **구현(실행 없음)**: libc 안에서 한 주소로
   점프하면 곧바로 `execve("/bin/sh", ...)` 가 실행되는 원샷 가젯을 찾는다. libc 실행
   코드를 capstone 으로 훑어 `lea rdi, [rip+/bin/sh]` 뒤에 `call execve`/execve
