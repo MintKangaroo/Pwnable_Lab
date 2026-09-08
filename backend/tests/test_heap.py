@@ -87,3 +87,103 @@ def test_service_heap_inspect_gated(tmp_path):
     assert result["attempted"] is True
     assert result["chunk_count"] >= 4
     assert any(b["index"] == 0 for b in result["tcache"])
+
+
+# fastbin(2개)+unsorted(1개)+tcache(7개) 를 한 스냅샷에 만드는 골든.
+_SRC_BINS = """
+#include <stdlib.h>
+void checkpoint(void){ }
+int main(void){
+  void *big = malloc(0x430);
+  void *g1  = malloc(0x20);
+  void *s[9];
+  for(int i=0;i<9;i++) s[i]=malloc(0x10);
+  void *g2 = malloc(0x20);
+  (void)g1;(void)g2;
+  free(big);
+  for(int i=0;i<9;i++) free(s[i]);
+  checkpoint();
+  return 0;
+}
+"""
+
+
+def _build_bins(tmp_path) -> tuple[str, int]:
+    csrc = tmp_path / "bins.c"
+    csrc.write_text(_SRC_BINS)
+    out = tmp_path / "bins"
+    subprocess.run(
+        ["gcc", "-no-pie", "-O0", "-o", str(out), str(csrc)],
+        check=True,
+        capture_output=True,
+    )
+    cp = next(
+        s.addr for s in parse_elf(out.read_bytes()).symbols if s.name == "checkpoint"
+    )
+    return str(out), int(cp)
+
+
+@_gated
+def test_inspect_heap_fastbin_unsorted_arena(tmp_path):
+    path, cp = _build_bins(tmp_path)
+    result = inspect_heap(path, breakpoint=cp, limits=SandboxLimits())
+    assert result["attempted"] is True
+
+    # unsorted: PREV_INUSE 로 감지된 free 청크가 main_arena 를 가리킨다.
+    unsorted = [c for c in result["free_chunks"] if c["bin"] == "unsorted"]
+    assert len(unsorted) == 1
+    assert unsorted[0]["links_to_arena"] is True
+    assert int(unsorted[0]["size"], 16) >= 0x430
+
+    # arena 복구 + fastbin: 0x20 bin 에 2개(7개는 tcache 로 가고 2개가 넘침).
+    arena = result["arena"]
+    assert arena is not None
+    assert arena["recovered_from"] == "unsorted-fd"
+    fb0 = next(b for b in arena["fastbins"] if b["index"] == 0)
+    assert fb0["chunk_size"] == "0x20"
+    assert fb0["count"] == 2
+    assert len(fb0["chain"]) == 2
+
+    # tcache 0x20 bin 은 7개(가득).
+    tc0 = next(b for b in result["tcache"] if b["index"] == 0)
+    assert tc0["count"] == 7
+
+
+@_gated
+def test_inspect_heap_no_free_chunks_arena_none(tmp_path):
+    # 기존 골든(free 는 tcache 로만) → PREV_INUSE-free 없음 → arena 복구 불가(None).
+    path, cp = _build(tmp_path)
+    result = inspect_heap(path, breakpoint=cp, limits=SandboxLimits())
+    assert result["arena"] is None
+    assert all(c["bin"] != "unsorted" for c in result["free_chunks"])
+
+
+def test_bin_kind_classification():
+    from pwnable_lab.sandbox.heap import _bin_kind
+
+    assert _bin_kind(0x20) == "fastbin"
+    assert _bin_kind(0x80) == "fastbin"
+    assert _bin_kind(0x90) == "smallbin"
+    assert _bin_kind(0x3F0) == "smallbin"
+    assert _bin_kind(0x400) == "largebin"
+    assert _bin_kind(0x1000) == "largebin"
+
+
+def test_free_chunks_smallbin_when_fd_in_heap():
+    # in_use=False 이고 fd 가 힙 내부를 가리키는 free 청크 → bin=크기기반(unsorted 아님).
+    from pwnable_lab.sandbox.heap import _free_chunks
+
+    base = 0x400000
+    # 힙 blob: 한 청크(off 0)를 free 로, fd 는 힙 내부(base+0x40)로.
+    import struct as _s
+
+    blob = bytearray(0x200)
+    _s.pack_into("<QQ", blob, 0x10, base + 0x40, base + 0x40)  # fd/bk in-heap
+    chunks = [
+        {"addr": f"0x{base:x}", "size": "0x90", "in_use": False},
+        {"addr": f"0x{base + 0x90:x}", "size": "0x20", "in_use": True},
+    ]
+    out = _free_chunks(base, bytes(blob), chunks)
+    assert len(out) == 1
+    assert out[0]["bin"] == "smallbin"
+    assert out[0]["links_to_arena"] is False
