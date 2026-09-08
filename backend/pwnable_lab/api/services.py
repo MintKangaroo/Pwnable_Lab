@@ -76,6 +76,7 @@ from pwnable_lab.sandbox import (
     auto_fmt_got_overwrite_pie_in_container,
     auto_fmt_leak_pie_core,
     auto_fmt_leak_pie_in_container,
+    auto_orw_core,
     auto_ret2libc_core,
     auto_ret2libc_in_container,
     auto_ret2system32_core,
@@ -938,6 +939,47 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_fmt_leak_pie_core(path, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def auto_orw(
+        self,
+        data: bytes,
+        *,
+        offset: int,
+        flag_path: str,
+        read_size: int = 100,
+        expect_marker: str | None = None,
+    ) -> dict:
+        """ORW(open→read→write) syscall ROP 자동 구성·실행로 플래그 유출을 증명한다.
+
+        seccomp 로 execve 가 막힌 환경(:mod:`analyzer.seccomp`)에서 셸 대신 플래그
+        파일을 열어 stdout 으로 유출한다. ``flag_path`` 문자열이 바이너리에 있어야
+        한다. 신뢰할 수 없는 바이너리를 **실행**하므로 마스터 게이트+격리 마커를
+        강제한다(non-PIE amd64, in-process). 기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Auto ORW")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_orw_core(
+                path,
+                offset=offset,
+                flag_path=flag_path,
+                read_size=read_size,
+                expect_marker=expect_marker,
+                limits=limits,
+            )
         finally:
             try:
                 os.unlink(path)

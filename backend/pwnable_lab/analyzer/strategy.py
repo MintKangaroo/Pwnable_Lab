@@ -20,7 +20,7 @@ from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.seccomp import analyze_seccomp
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import CallSite, Finding, scan_vulns
-from pwnable_lab.elf.parser import ElfImage
+from pwnable_lab.elf.parser import ElfImage, SectionInfo
 
 # 로컬 "win"/셸 함수 후보로 볼 이름 조각 (libc 심볼과 구분하기 위해 로컬 정의만 사용).
 # 강한 힌트(셸/플래그 의미가 뚜렷)는 약한 힌트보다 우선 선택된다.
@@ -950,6 +950,74 @@ def find_binsh(image: ElfImage) -> int | None:
         if idx != -1:
             return section.addr + idx
     return None
+
+
+def find_string(image: ElfImage, needle: bytes) -> int | None:
+    """임의 바이트 문자열의 가상주소를 찾는다(주소 있는 섹션 우선). 없으면 None."""
+
+    if not needle:
+        return None
+    for section in image.sections:
+        if not section.addr or section.size <= 0:
+            continue
+        blob = image.data[section.offset : section.offset + section.size]
+        idx = blob.find(needle)
+        if idx != -1:
+            return section.addr + idx
+    return None
+
+
+def find_writable_buffer(image: ElfImage, size: int = 256) -> int | None:
+    """``size`` 바이트를 쓸 수 있는 쓰기 가능·비실행 영역의 가상주소를 찾는다.
+
+    ORW 체인의 ``read`` 목적지로 쓴다. 쓰기 가능하고 실행 불가한 가장 큰 섹션
+    (.bss/.data)을 골라, 시작부 전역을 덜 건드리도록 조금 뒤(그러나 ``size`` 여유가
+    남는) 주소를 반환한다. 여유 있는 영역이 없으면 None.
+    """
+
+    def _writable(section: SectionInfo) -> bool:
+        return bool(
+            section.writable
+            and not section.executable
+            and section.addr
+            and section.size >= size
+        )
+
+    # .bss(SHT_NOBITS)를 우선한다 — 항상 런타임 쓰기 가능(RELRO 영향 없음)하고
+    # 초기값이 없어 스크래치로 안전하다. 없으면 가장 큰 쓰기 가능·비실행 섹션.
+    bss = [s for s in image.sections if _writable(s) and s.stype == "SHT_NOBITS"]
+    candidates = bss or [s for s in image.sections if _writable(s)]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda s: s.size)
+    # 시작부(사용 중 전역) 회피를 위해 조금 뒤로, 단 size 여유를 남긴다.
+    headroom = min(0x40, max(0, best.size - size))
+    return best.addr + headroom
+
+
+def orw_plan(image: ElfImage) -> dict | None:
+    """amd64 ORW(open→read→write) syscall ROP 재료를 정적으로 수집.
+
+    seccomp 로 execve 가 막힌 환경에서 플래그 파일을 읽어 유출하는 체인용이다.
+    클린 ``pop rdi/rsi/rdx/rax`` 가젯 + ``syscall`` 가젯 + 쓰기 가능 버퍼를 모두
+    찾으면 dict, 하나라도 없으면 None. 32-bit 는 대상 아님(호출규약 상이).
+    """
+
+    if (image.bits or 64) != 64:
+        return None
+    pops = {reg: find_clean_pop(image, reg) for reg in ("rdi", "rsi", "rdx", "rax")}
+    syscall = find_syscall_gadget(image)
+    buf = find_writable_buffer(image, 256)
+    if any(v is None for v in pops.values()) or syscall is None or buf is None:
+        return None
+    return {
+        "pop_rdi": pops["rdi"],
+        "pop_rsi": pops["rsi"],
+        "pop_rdx": pops["rdx"],
+        "pop_rax": pops["rax"],
+        "syscall": syscall,
+        "buf": buf,
+    }
 
 
 def _system_address(image: ElfImage) -> int | None:

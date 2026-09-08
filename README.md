@@ -612,6 +612,12 @@ Pwnable_Lab/
   가 차단되면 exploit 전략이 셸(ret2system/execve) 경로를 blocked 처리하고 ORW
   (open→read→write)로 플래그를 읽도록 안내**(`analyze_strategy` 통합). 현대 CTF 의
   "셸이 안 통하는" 환경을 정직하게 반영
+- ORW 자동 익스(`auto-orw`) — **구현(opt-in)**: seccomp 로 execve 가 막힌 환경에서
+  셸 대신 **open→read→write syscall ROP** 를 자동 구성해 플래그 파일을 열어 stdout
+  으로 유출한다(`sandbox.orw`, `POST /binaries/{sha}/auto-orw`). 클린 pop rdi/rsi/rdx/
+  rax 가젯 + syscall 가젯 + .bss 버퍼 + 바이너리 내 플래그 경로 문자열을 정적 수집해
+  체인을 만들고, 샌드박스에서 실행해 **플래그 내용이 유출되는지로 성공을 증명**
+  (셸 획득이 아니라 플래그 유출). non-PIE amd64
 
 ## 라이선스
 
