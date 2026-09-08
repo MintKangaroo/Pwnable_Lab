@@ -605,6 +605,13 @@ Pwnable_Lab/
   설명을 받는다(`analyzer.llm`, `POST /binaries/{sha}/explain-strategy`; 프론트 Strategy
   뷰에 "LLM 설명 생성" 카드). anthropic provider 는 `anthropic` SDK 를 지연 임포트
   (선택적 의존성), 기본 모델 `claude-opus-5`. 후속: 다른 provider·요약 재구성
+- seccomp 분석 + 전략 통합 — **구현(실행 없음)**: 바이너리의 seccomp-BPF 필터
+  (``struct sock_filter[]``)를 아키텍처 검사 프롤로그 서명으로 찾아 BPF 프로그램을
+  디코딩·시뮬레이션해 허용/차단 syscall 을 판별(`analyzer.seccomp`, `GET
+  /binaries/{sha}/seccomp`). blocklist·allowlist 스타일 모두 지원. **execve/execveat
+  가 차단되면 exploit 전략이 셸(ret2system/execve) 경로를 blocked 처리하고 ORW
+  (open→read→write)로 플래그를 읽도록 안내**(`analyze_strategy` 통합). 현대 CTF 의
+  "셸이 안 통하는" 환경을 정직하게 반영
 
 ## 라이선스
 

@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, field
 from pwnable_lab.analyzer.checksec import Checksec, run_checksec
 from pwnable_lab.analyzer.gadgets import Gadget, scan_gadgets
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
+from pwnable_lab.analyzer.seccomp import analyze_seccomp
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import CallSite, Finding, scan_vulns
 from pwnable_lab.elf.parser import ElfImage
@@ -145,6 +146,21 @@ def analyze_strategy(image: ElfImage, *, max_instructions: int = 20_000) -> dict
 
     primitives = _detect_primitives(context)
     paths = _build_paths(context, primitives)
+
+    # seccomp 가 execve/execveat 를 막으면 셸(execve/system) 기반 경로는 성립하지
+    # 않으므로 해당 경로를 차단 처리하고 ORW 전략 필요를 표시한다.
+    seccomp = analyze_seccomp(image)
+    if seccomp.present and seccomp.execve_blocked:
+        for path in paths:
+            if path.id in {"ret2system", "execve"}:
+                path.blockers = [
+                    *path.blockers,
+                    "seccomp 가 execve/execveat 를 차단합니다 — 이 경로 대신 "
+                    "ORW(open→read→write)로 플래그를 읽어야 합니다.",
+                ]
+                path.status = "blocked"
+                path.confidence = min(path.confidence, 0.2)
+
     paths.sort(key=lambda path: (-path.confidence, path.id))
 
     recommended = next(
@@ -168,6 +184,7 @@ def analyze_strategy(image: ElfImage, *, max_instructions: int = 20_000) -> dict
         "primitives": [asdict(primitive) for primitive in primitives],
         "paths": [asdict(path) for path in paths],
         "recommended_path_id": recommended,
+        "seccomp": seccomp.as_dict(),
         "verification": "inferred",
         "confidence": round(max((path.confidence for path in paths), default=0.2), 2),
         "disclaimer": (
@@ -178,6 +195,7 @@ def analyze_strategy(image: ElfImage, *, max_instructions: int = 20_000) -> dict
             "실제 실행/디버깅 없이 정적 근거만 사용합니다.",
             "오프셋은 스택 프레임과 버퍼 인자에서 추정하며 정확하지 않을 수 있습니다.",
             "libc 주소, ASLR 우회, 원격 leak 흐름은 이 초안에 포함되지 않습니다.",
+            *(seccomp.notes if seccomp.present else []),
         ],
     }
 

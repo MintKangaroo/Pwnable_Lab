@@ -36,6 +36,7 @@ from pwnable_lab.analyzer.ghidra_insights import (
 from pwnable_lab.analyzer.got_plt import analyze_got_plt
 from pwnable_lab.analyzer.llm import LLMProvider, build_provider
 from pwnable_lab.analyzer.packing import detect_packing
+from pwnable_lab.analyzer.seccomp import analyze_seccomp
 from pwnable_lab.analyzer.strategy import (
     analyze_strategy,
     execve_plan,
@@ -316,6 +317,19 @@ class AnalysisService:
         if detect_format(data) is not ArtifactFormat.ELF:
             return {"format": "unsupported", "packed": False, "signals": []}
         result = detect_packing(parse_elf(data)).as_dict()
+        result["format"] = "ELF"
+        return result
+
+    def seccomp(self, data: bytes) -> dict:
+        """seccomp-BPF 필터 정적 분석(실행 없음): 허용/차단 syscall 판별.
+
+        execve/execveat 차단 여부·ORW 가능성을 판별해 exploit 전략에 반영한다. ELF 만
+        대상, 그 외는 unsupported.
+        """
+
+        if detect_format(data) is not ArtifactFormat.ELF:
+            return {"format": "unsupported", "present": False}
+        result = analyze_seccomp(parse_elf(data)).as_dict()
         result["format"] = "ELF"
         return result
 
