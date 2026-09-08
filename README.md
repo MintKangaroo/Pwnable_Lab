@@ -190,7 +190,9 @@ network-disabled 일회용 컨테이너(`--network none --read-only --cap-drop A
 - **auto-exploit**: 정적 전략 + 동적 확정 오프셋을 pwntools 스켈레톤에 주입하고,
   ret2win(정렬 재시도) → ret2system(pop rdi→/bin/sh→system 자동 구성) →
   **execve syscall ROP**(system 없는 정적 링크: pop rdi/rsi/rdx/rax + `/bin/sh` +
-  syscall 로 `execve("/bin/sh",0,0)` 구성) 순서로 **무입력 자동 검증**
+  syscall 로 `execve("/bin/sh",0,0)` 구성) → **SROP**(sigreturn: pop rax + syscall +
+  `/bin/sh` 만으로 인자 가젯 없이 execve — `sandbox.srop`, `POST /binaries/{sha}/auto-srop`)
+  순서로 **무입력 자동 검증**
 - **i386(32-bit) 자동 익스**: 32-bit tracee 도 x86-64 호스트 ptrace 로 관측(EIP→RIP
   슬롯 매핑)해 오프셋을 확정하고, cdecl ret2system(스택 인자라 pop 가젯 불필요)으로
   셸을 증명. SysV i386 16바이트 스택 정렬을 `ret` 가젯 0~3개로 맞춤(amd64 movaps

@@ -53,6 +53,7 @@ from pwnable_lab.analyzer.strategy import (
     ret2system_plan,
     ret2system_plan32,
     ret2win_target,
+    srop_plan,
 )
 from pwnable_lab.analyzer.strings import extract_strings
 from pwnable_lab.analyzer.vuln_scan import scan_vulns
@@ -95,6 +96,7 @@ from pwnable_lab.sandbox import (
     auto_ret2system_pie_in_container,
     auto_ret2win_pie_core,
     auto_ret2win_pie_in_container,
+    auto_srop_core,
     confirm_offset_in_container,
     confirm_offset_in_process,
     dump_memory,
@@ -577,6 +579,12 @@ class AnalysisService:
             if attempts[-1]["succeeded"]:
                 return self._with_attempts(attempts[-1], attempts)
 
+        # 인자 가젯이 부족해도 syscall + pop rax + /bin/sh 면 SROP 로 시도한다.
+        if srop_plan(image) is not None:
+            attempts.append(self._auto_srop(data, offset))
+            if attempts[-1]["succeeded"]:
+                return self._with_attempts(attempts[-1], attempts)
+
         if attempts:
             return self._with_attempts(attempts[0], attempts)
         return {"attempted": False, "reason": "no-technique"}
@@ -721,6 +729,29 @@ class AnalysisService:
         path = self._materialize(data)
         try:
             return auto_execve_core(path, offset=offset, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _auto_srop(self, data: bytes, offset: int) -> dict:
+        """자동 SROP(sigreturn)로 셸 획득을 증명한다(in-process, non-PIE amd64).
+
+        pop rdi/rsi/rdx 가젯이 없어도 syscall + pop rax + /bin/sh 만으로 성립한다.
+        PTY 셸 증명이 실행 프로세스 안에서 일어나므로 container executor 는 미지원
+        (in-process 로만 수행).
+        """
+
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        try:
+            return auto_srop_core(path, offset=offset, limits=limits)
         finally:
             try:
                 os.unlink(path)
@@ -1036,6 +1067,18 @@ class AnalysisService:
                 os.unlink(path)
             except OSError:
                 pass
+
+    def auto_srop(self, data: bytes, *, offset: int) -> dict:
+        """자동 SROP(sigreturn)로 셸 획득을 증명한다(non-PIE amd64, in-process).
+
+        pop rdi/rsi/rdx 가젯이 부족해도 syscall + pop rax + /bin/sh 로 성립한다.
+        신뢰할 수 없는 바이너리를 **실행**하므로 마스터 게이트+격리 마커를 강제한다.
+        기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.ELF, feature="Auto SROP")
+        return self._auto_srop(data, offset)
 
     def auto_fmt_got_overwrite(self, data: bytes) -> dict:
         """포맷스트링 %n GOT 덮어쓰기 자동 익스: GOT → win 리다이렉트 → 셸 증명.
