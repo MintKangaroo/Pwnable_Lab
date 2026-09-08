@@ -624,6 +624,12 @@ Pwnable_Lab/
   `syscall` 이 오는 지점을 잡아 **libc base 상대 오프셋 + 제약(rsi/rdx NULL 여부)**
   을 보고(`analyzer.one_gadget`, `GET /binaries/{sha}/one-gadget`). ret2libc 를 한
   가젯으로 간소화. 실 시스템 libc 로 실측 검증(구조 대조)
+- libc 버전 식별/지문(`libc-id`) — **구현(실행 없음)**: libc 파일에서 버전 문자열·
+  build-id·핵심 심볼 오프셋·`/bin/sh` 를 뽑아 지문화(`analyzer.libc_id`, `GET
+  /binaries/{sha}/libc-id`). 원격 ret2libc 에서 유출한 심볼 주소로 libc base 와 다른
+  심볼 런타임 주소를 계산(`POST /binaries/{sha}/libc-resolve`) — ASLR base 는 페이지
+  정렬이라 **유출 주소의 하위 12비트 == 오프셋 하위 12비트**로 일치성 검증
+  (libc-database 매칭 원리). 실 시스템 libc 2.35 로 실측
 
 ## 라이선스
 

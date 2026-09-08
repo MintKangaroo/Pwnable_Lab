@@ -228,6 +228,28 @@ def binary_packing(
     return service.packing(repo.load_bytes(sha256))
 
 
+@router.get("/{sha256}/libc-id")
+def binary_libc_id(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """libc 버전 식별/지문(실행 없음): 버전·build-id·핵심 심볼 오프셋·/bin/sh."""
+    return service.libc_identify(repo.load_bytes(sha256))
+
+
+@router.post("/{sha256}/libc-resolve")
+def binary_libc_resolve(
+    sha256: str,
+    symbol: str = Query(..., min_length=1, max_length=128),
+    leaked: int = Query(..., ge=0),
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """유출된 심볼 주소로 libc base·핵심 심볼 런타임 주소를 계산한다(실행 없음)."""
+    return service.libc_resolve(repo.load_bytes(sha256), symbol=symbol, leaked=leaked)
+
+
 @router.get("/{sha256}/one-gadget")
 def binary_one_gadget(
     sha256: str,
