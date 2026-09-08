@@ -228,6 +228,16 @@ def binary_packing(
     return service.packing(repo.load_bytes(sha256))
 
 
+@router.get("/{sha256}/one-gadget")
+def binary_one_gadget(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """libc 원샷 execve("/bin/sh") 가젯 정적 탐지(실행 없음): 오프셋·제약(rsi/rdx)."""
+    return service.one_gadget(repo.load_bytes(sha256))
+
+
 @router.get("/{sha256}/seccomp")
 def binary_seccomp(
     sha256: str,
