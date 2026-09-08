@@ -50,6 +50,7 @@ from pwnable_lab.analyzer.strategy import (
     inject_confirmed_offset,
     is_pie,
     leak_plan,
+    ret2dlresolve_plan,
     ret2system_plan,
     ret2system_plan32,
     ret2win_target,
@@ -61,6 +62,7 @@ from pwnable_lab.config import Settings
 from pwnable_lab.elf.parser import ElfImage, parse_elf
 from pwnable_lab.errors import AnalysisError
 from pwnable_lab.formats import ArtifactFormat, detect_format
+from pwnable_lab.payload.ret2dlresolve import build_ret2dlresolve
 from pwnable_lab.pe.analyzer import (
     disassemble_pe,
     disassemble_raw,
@@ -355,6 +357,42 @@ class AnalysisService:
         if result is None:
             return {"consistent": False, "reason": "unknown-symbol", "symbol": symbol}
         return result
+
+    def ret2dlresolve(self, data: bytes) -> dict:
+        """ret2dlresolve 위조 구조체·reloc_arg 를 정적으로 생성한다(실행 없음).
+
+        leak 없이 임의 심볼(system) 을 해석하려는 위조 Elf64_Sym/Rela/문자열 뭉치와
+        ``.plt[0]`` 에 넘길 reloc 인덱스를 만든다. non-PIE 지연바인딩 대상. 재료가
+        없으면 ``available:false``.
+
+        참고: glibc 2.34+ 는 심볼 버전 검사로 고전 기법을 하드닝해 실제 셸 획득이
+        libc 버전에 따라 성립하지 않을 수 있다(구조체는 정확히 생성).
+        """
+
+        if detect_format(data) is not ArtifactFormat.ELF:
+            return {"format": "unsupported", "available": False}
+        image = parse_elf(data)
+        plan = ret2dlresolve_plan(image)
+        if plan is None:
+            return {"format": "ELF", "available": False, "reason": "no-plan"}
+        forged = build_ret2dlresolve(
+            jmprel=plan["jmprel"],
+            dynsym=plan["dynsym"],
+            dynstr=plan["dynstr"],
+            buf=plan["buf"],
+        )
+        return {
+            "format": "ELF",
+            "available": True,
+            "plt0_hex": f"0x{plan['plt0']:x}",
+            "buf_hex": f"0x{plan['buf']:x}",
+            "pop_rdi_hex": f"0x{plan['pop_rdi']:x}",
+            "blob_hex": forged.blob.hex(),
+            **forged.as_dict(),
+            "note": (
+                "glibc 2.34+ 는 심볼 버전 검사로 고전 ret2dlresolve 를 하드닝합니다."
+            ),
+        }
 
     def one_gadget(self, data: bytes) -> dict:
         """libc 안의 원샷 execve("/bin/sh") 가젯 정적 탐지(실행 없음).

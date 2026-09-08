@@ -1020,6 +1020,35 @@ def orw_plan(image: ElfImage) -> dict | None:
     }
 
 
+def ret2dlresolve_plan(image: ElfImage) -> dict | None:
+    """amd64 ret2dlresolve 재료(리졸버·재배치/심볼/문자열 테이블·쓰기버퍼·pop rdi)를 수집.
+
+    동적 링커 지연 해석을 악용하려면 ``.plt[0]`` 리졸버, ``.rela.plt``(JMPREL),
+    ``.dynsym``, ``.dynstr`` 섹션 주소와 위조 구조체를 놓을 쓰기 가능 버퍼, 인자 세팅용
+    ``pop rdi`` 가 필요하다. 모두 non-PIE 절대주소로 찾으면 dict, 없으면 None.
+    지연 바인딩(비 BIND_NOW) 동적 링크 바이너리에서만 의미가 있다.
+    """
+
+    if (image.bits or 64) != 64 or is_pie(image):
+        return None
+    plt = image.section(".plt")
+    jmprel = image.section(".rela.plt") or image.section(".rel.plt")
+    dynsym = image.section(".dynsym")
+    dynstr = image.section(".dynstr")
+    pop_rdi = _find_pop_rdi(image)
+    buf = find_writable_buffer(image, 512)
+    if not (plt and jmprel and dynsym and dynstr) or pop_rdi is None or buf is None:
+        return None
+    return {
+        "plt0": plt.addr,
+        "jmprel": jmprel.addr,
+        "dynsym": dynsym.addr,
+        "dynstr": dynstr.addr,
+        "buf": buf,
+        "pop_rdi": pop_rdi,
+    }
+
+
 def srop_plan(image: ElfImage) -> dict | None:
     """amd64 SROP 재료(pop rax·syscall 가젯·/bin/sh)를 정적으로 수집.
 
