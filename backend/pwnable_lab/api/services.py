@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import shutil
 import stat
 import tempfile
 from dataclasses import asdict, dataclass
@@ -108,6 +109,7 @@ from pwnable_lab.sandbox import (
     require_isolation_marker,
     require_sandbox_enabled,
     run_debug_script,
+    run_pe,
     run_under_qemu,
     runtime_strings,
     unpack_upx,
@@ -1410,6 +1412,34 @@ class AnalysisService:
                 os.unlink(path)
             except OSError:
                 pass
+
+    def pe_dynamic_run(self, data: bytes, *, stdin_hex: str | None = None) -> dict:
+        """PE 를 wine 으로 실행해 stdout/stderr·종료코드·Windows 예외를 관측한다.
+
+        정적 PE 분석의 동적 짝. 신뢰할 수 없는 PE 를 **실행**하므로 마스터 게이트+격리
+        마커를 강제한다(in-process). 기본 비활성 — 503. ``stdin_hex`` 로 표준입력을
+        hex 로 넘길 수 있다(fmt/overflow 트리거용). wine 부재 시 attempted=False.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.PE, feature="PE dynamic run")
+        require_isolation_marker(self.settings)
+        stdin_data = bytes.fromhex(stdin_hex) if stdin_hex else b""
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        prefix = path + ".wine"
+        try:
+            return run_pe(path, stdin_data=stdin_data, wineprefix=prefix, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            shutil.rmtree(prefix, ignore_errors=True)
 
     def open_debug_worker(self, data: bytes) -> DebugWorker:
         """게이트를 통과시킨 뒤 라이브 디버그 세션 워커를 연다(WebSocket 용).

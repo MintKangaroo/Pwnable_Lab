@@ -379,6 +379,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/info` | format-aware 정규화 정보 |
 | `GET` | `/binaries/{binary_id}/elf` | Phase 2 ELF metadata 계약 |
 | `GET` | `/binaries/{binary_id}/pe` | PE32/PE32+ metadata; non-PE는 거부 |
+| `POST` | `/binaries/{binary_id}/pe-run` | PE 동적 실행(wine): stdout/exit·Windows 예외 관측; 실행 게이트(503 가능) |
 | `GET` | `/binaries/{binary_id}/checksec` | 보호 기법 |
 | `GET` | `/binaries/{binary_id}/symbols` | 종류별 paginated symbol |
 | `GET` | `/binaries/{binary_id}/imports` | paginated imports |
@@ -635,6 +636,13 @@ Pwnable_Lab/
   `syscall` 이 오는 지점을 잡아 **libc base 상대 오프셋 + 제약(rsi/rdx NULL 여부)**
   을 보고(`analyzer.one_gadget`, `GET /binaries/{sha}/one-gadget`). ret2libc 를 한
   가젯으로 간소화. 실 시스템 libc 로 실측 검증(구조 대조)
+- PE 동적 실행(`pe-run`) — **구현(opt-in, wine)**: 정적 PE 분석의 동적 짝. `wine`
+  user-space 로더로 신뢰할 수 없는 PE 를 실제 실행해 stdout/stderr·종료코드·Windows
+  예외(access violation 등, faulting 주소·access 종류 파싱)를 관측한다. `stdin_hex`
+  로 입력 주입(fmt/overflow 트리거). winedbg 덤프는 프로그램 출력에서 분리. CPU
+  rlimit·프로세스그룹 종료·wall-clock 로 바운딩(RLIMIT_AS 미설정 — wine 이 큰
+  주소공간 예약). 실 zig 빌드 PE(정상·stdin 왕복·널 역참조 크래시)로 실측
+  (`sandbox.pe_dynamic`, `POST /binaries/{sha}/pe-run`). wine 부재 시 attempted=False
 - 힙 인스펙터(`heap`) — **구현(opt-in)**: heap 챌린지(tcache poisoning·UAF·
   double-free)를 위해 실행 중 glibc 힙을 파싱한다. ptrace 디버거로 대상을 브레이크
   포인트/N 스텝까지 실행한 뒤 `[heap]` 청크를 size 필드로 순회(첫 청크=tcache
