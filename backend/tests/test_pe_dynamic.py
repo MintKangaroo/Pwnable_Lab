@@ -211,3 +211,114 @@ def test_detect_crash_unhandled_fallback():
 def test_locate_wine_returns_path_or_none():
     # 실제 환경에 의존하지 않는 스모크(경로 or None 둘 다 유효).
     assert locate_wine() is None or locate_wine().endswith("wine")
+
+
+_VULN = (
+    "#include <stdio.h>\n"
+    "void vuln(void){char buf[64];fread(buf,1,512,stdin);}\n"
+    "int main(void){vuln();return 0;}\n"
+)
+
+
+@_gated
+def test_pe_crash_triage_flags_overflow(tmp_path, wineprefix):
+    from pwnable_lab.sandbox.pe_dynamic import pe_crash_triage
+
+    exe = _build(tmp_path, "vuln", _VULN)
+    t = pe_crash_triage(exe, wineprefix=wineprefix, limits=SandboxLimits())
+    assert t["attempted"] is True
+    assert t["baseline_ok"] is True
+    assert "overflow" in t["crashing_probes"]
+    assert t["likely_overflow"] is True
+
+
+@_gated
+def test_pe_crash_triage_clean_binary(tmp_path, wineprefix):
+    from pwnable_lab.sandbox.pe_dynamic import pe_crash_triage
+
+    exe = _build(tmp_path, "clean", _HELLO)
+    t = pe_crash_triage(exe, wineprefix=wineprefix, limits=SandboxLimits())
+    assert t["baseline_ok"] is True
+    assert t["crashing_probes"] == []
+    assert t["likely_overflow"] is False
+
+
+def test_cyclic_nonrepeating():
+    from pwnable_lab.sandbox.pe_dynamic import _cyclic
+
+    pat = _cyclic(300)
+    assert len(pat) == 300
+    # 4바이트 윈도우가 대체로 유일(반복 단일 바이트가 아님).
+    windows = {pat[i : i + 4] for i in range(0, 296, 4)}
+    assert len(windows) >= 70
+
+
+def test_detect_crash_illegal_instruction_generic():
+    from pwnable_lab.sandbox.pe_dynamic import _detect_crash
+
+    err = (
+        "wine: Unhandled illegal instruction at address 0000000140002B24 (thread 0024)"
+    )
+    crash = _detect_crash(0, err)
+    assert crash["reason"] == "ILLEGAL_INSTRUCTION"
+    assert crash["instruction_pointer"] == "0x140002b24"
+
+
+def test_pe_crash_triage_wine_unavailable(tmp_path, monkeypatch):
+    from pwnable_lab.sandbox import pe_dynamic
+    from pwnable_lab.sandbox.pe_dynamic import pe_crash_triage
+
+    exe = tmp_path / "x.exe"
+    exe.write_bytes(_pe_head(0x20B))
+    monkeypatch.setattr(pe_dynamic, "locate_wine", lambda: None)
+    result = pe_crash_triage(str(exe), limits=SandboxLimits())
+    assert result["attempted"] is False
+    assert result["reason"] == "wine-unavailable"
+
+
+def test_pe_bits_none_when_lfanew_beyond_head():
+    from pwnable_lab.sandbox.pe_dynamic import _pe_bits
+
+    head = bytearray(0x40)
+    head[0:2] = b"MZ"
+    head[0x3C:0x40] = (0x1000).to_bytes(4, "little")  # e_lfanew 가 head 밖
+    assert _pe_bits(bytes(head)) is None
+
+
+def test_pe_crash_triage_aggregates_without_wine(tmp_path, monkeypatch):
+    from pwnable_lab.sandbox import pe_dynamic
+    from pwnable_lab.sandbox.pe_dynamic import pe_crash_triage
+
+    exe = tmp_path / "x.exe"
+    exe.write_bytes(_pe_head(0x20B))
+
+    def fake_run(binary_path, *, stdin_data=b"", wineprefix=None, limits=None):
+        crashes = {
+            b"": None,
+            b"%p." * 32 + b"%n" * 4: {"reason": "ACCESS_VIOLATION"},
+        }
+        crash = crashes.get(bytes(stdin_data), None)
+        return {
+            "attempted": True,
+            "crashed": crash is not None,
+            "crash": crash,
+            "exit_code": 0,
+            "timed_out": False,
+        }
+
+    monkeypatch.setattr(pe_dynamic, "run_pe", fake_run)
+    t = pe_crash_triage(str(exe), limits=SandboxLimits())
+    assert t["baseline_ok"] is True
+    assert t["likely_format"] is True
+    assert t["likely_overflow"] is False
+    assert "ACCESS_VIOLATION" in t["crash_reasons"]
+
+
+@_gated
+def test_run_pe_timeout_kills(tmp_path, wineprefix):
+    exe = _build(tmp_path, "spin", "int main(void){for(;;){}return 0;}\n")
+    result = run_pe(
+        exe, wineprefix=wineprefix, limits=SandboxLimits(wall_seconds=1, cpu_seconds=2)
+    )
+    assert result["attempted"] is True
+    assert result["timed_out"] is True

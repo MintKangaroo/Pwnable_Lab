@@ -43,13 +43,26 @@ _WIN_EXCEPTIONS = {
 }
 # wine 이 처리되지 않은 예외를 stderr 로 알릴 때 쓰는 마커들.
 _CRASH_MARKERS = ("unhandled exception", "unhandled page fault", "starting debugger")
-# stderr 한 줄에서 fault 정보 추출:
+# page fault 전용: access 종류·대상 주소·faulting 명령 주소까지 추출.
 #   "Unhandled page fault on write access to 0000...0 at address 0000...22 (thread ..)"
 _FAULT_RE = re.compile(
     r"unhandled page fault on (\w+) access to ([0-9a-fA-F]+) "
     r"at address ([0-9a-fA-F]+)",
     re.IGNORECASE,
 )
+# 일반 예외: "Unhandled <type> at address <hex>" (illegal instruction/stack overflow 등).
+_GENERIC_FAULT_RE = re.compile(
+    r"unhandled (.+?) at address ([0-9a-fA-F]+)", re.IGNORECASE
+)
+# wine 예외 문구 → NTSTATUS 이름.
+_PHRASE_TO_REASON = {
+    "illegal instruction": "ILLEGAL_INSTRUCTION",
+    "page fault": "ACCESS_VIOLATION",
+    "stack overflow": "STACK_OVERFLOW",
+    "divide by zero": "INTEGER_DIVIDE_BY_ZERO",
+    "privileged instruction": "PRIVILEGED_INSTRUCTION",
+    "breakpoint": "BREAKPOINT",
+}
 # stdout 에 섞이는 winedbg 덤프 시작 표식(여기서부터는 프로그램 출력이 아니다).
 _DUMP_MARKER = b"Unhandled exception:"
 
@@ -155,7 +168,7 @@ def run_pe(
         timed_out = True
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
+        except (ProcessLookupError, PermissionError):  # pragma: no cover - 경쟁 방어
             proc.kill()
         out, err = proc.communicate()
 
@@ -225,6 +238,15 @@ def _detect_crash(exit_code: int | None, err_text: str) -> dict | None:
             "fault_address": f"0x{int(target, 16):x}",
             "instruction_pointer": f"0x{int(rip, 16):x}",
         }
+    # 일반 예외(illegal instruction/stack overflow 등): 문구 + faulting 주소.
+    generic = _GENERIC_FAULT_RE.search(err_text)
+    if generic:
+        phrase, rip = generic.group(1).strip().lower(), generic.group(2)
+        reason = next(
+            (r for p, r in _PHRASE_TO_REASON.items() if p in phrase),
+            "UNHANDLED_EXCEPTION",
+        )
+        return {"reason": reason, "instruction_pointer": f"0x{int(rip, 16):x}"}
     if marker_hit:
         for code, name in _WIN_EXCEPTIONS.items():
             if f"{code:08x}" in lowered:
@@ -236,4 +258,86 @@ def _detect_crash(exit_code: int | None, err_text: str) -> dict | None:
     return None
 
 
-__all__ = ["locate_wine", "run_pe"]
+def _cyclic(length: int) -> bytes:
+    """de Bruijn 류 비반복 패턴(4바이트 주기). 반환주소 오염 시 크래시 유발률↑.
+
+    pwntools 의존 없이 'aaaa','baaa',... 4글자 그룹을 이어 붙인다(모든 A 같은 단일
+    바이트 패턴은 /GS 쿠키 경로에서 크래시하지 않을 수 있어 회피).
+    """
+
+    alphabet = b"abcdefghijklmnopqrstuvwxyz"
+    out = bytearray()
+    for a in alphabet:
+        for b in alphabet:
+            for c in alphabet:
+                for d in alphabet:
+                    out += bytes((a, b, c, d))
+                    if len(out) >= length:
+                        return bytes(out[:length])
+    return bytes(out[:length])  # pragma: no cover - 알파벳 소진(비현실적 길이)
+
+
+# PE 크래시 트리아지에 쓰는 기본 probe 배터리(입력 클래스별 대표).
+_DEFAULT_PROBES: tuple[tuple[str, bytes], ...] = (
+    ("baseline", b""),
+    ("overflow", _cyclic(300)),
+    ("format", b"%p." * 32 + b"%n" * 4),
+    ("negative", b"-1\n-2147483648\n"),
+)
+
+
+def pe_crash_triage(
+    binary_path: str,
+    *,
+    probes: tuple[tuple[str, bytes], ...] = _DEFAULT_PROBES,
+    wineprefix: str | None = None,
+    limits: SandboxLimits | None = None,
+) -> dict:
+    """PE 에 입력 probe 배터리를 주입해 크래시를 분류한다(동적 취약점 트리아지).
+
+    각 probe(overflow/format/negative 등)를 stdin 으로 넣고 실행해 크래시 여부·예외
+    종류·faulting 주소를 모은다. baseline(빈 입력)이 정상이고 특정 probe 에서만
+    크래시하면 그 입력 클래스가 취약 신호다. wine 부재 시 attempted=False.
+    """
+
+    limits = limits or SandboxLimits()
+    results: list[dict] = []
+    attempted = False
+    for name, payload in probes:
+        run = run_pe(
+            binary_path,
+            stdin_data=payload,
+            wineprefix=wineprefix,
+            limits=limits,
+        )
+        if not run.get("attempted"):
+            return {"attempted": False, "reason": run.get("reason")}
+        attempted = True
+        results.append(
+            {
+                "probe": name,
+                "input_len": len(payload),
+                "crashed": run["crashed"],
+                "crash": run["crash"],
+                "exit_code": run["exit_code"],
+                "timed_out": run["timed_out"],
+            }
+        )
+
+    baseline = next((r for r in results if r["probe"] == "baseline"), None)
+    baseline_ok = bool(baseline and not baseline["crashed"])
+    crashing = [r["probe"] for r in results if r["crashed"]]
+    reasons = {r["crash"]["reason"] for r in results if r["crash"]}
+    return {
+        "attempted": attempted,
+        "baseline_ok": baseline_ok,
+        "crashing_probes": crashing,
+        "crash_reasons": sorted(reasons),
+        # baseline 은 멀쩡한데 overflow 만 죽으면 오버플로우 취약 신호.
+        "likely_overflow": baseline_ok and "overflow" in crashing,
+        "likely_format": baseline_ok and "format" in crashing,
+        "results": results,
+    }
+
+
+__all__ = ["locate_wine", "pe_crash_triage", "run_pe"]

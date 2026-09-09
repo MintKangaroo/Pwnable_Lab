@@ -381,6 +381,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/pe` | PE32/PE32+ metadata; non-PE는 거부 |
 | `POST` | `/binaries/{binary_id}/heap/tcache-poison` | tcache poisoning 실측 증명(fd 오염→임의 할당); 실행 게이트(503 가능) |
 | `POST` | `/binaries/{binary_id}/pe-run` | PE 동적 실행(wine): stdout/exit·Windows 예외 관측; 실행 게이트(503 가능) |
+| `POST` | `/binaries/{binary_id}/pe-triage` | PE 크래시 트리아지(wine): overflow/format probe 로 동적 취약점 신호; 실행 게이트(503 가능) |
 | `GET` | `/binaries/{binary_id}/checksec` | 보호 기법 |
 | `GET` | `/binaries/{binary_id}/symbols` | 종류별 paginated symbol |
 | `GET` | `/binaries/{binary_id}/imports` | paginated imports |
@@ -644,6 +645,13 @@ Pwnable_Lab/
   rlimit·프로세스그룹 종료·wall-clock 로 바운딩(RLIMIT_AS 미설정 — wine 이 큰
   주소공간 예약). 실 zig 빌드 PE(정상·stdin 왕복·널 역참조 크래시)로 실측
   (`sandbox.pe_dynamic`, `POST /binaries/{sha}/pe-run`). wine 부재 시 attempted=False
+- PE 크래시 트리아지(`pe-triage`) — **구현(opt-in, wine)**: PE 에 입력 probe 배터리
+  (baseline·overflow(비반복 cyclic)·format(`%p%n`)·negative)를 주입·실행해 크래시·예외
+  종류·faulting 주소를 모으고, baseline 은 멀쩡한데 특정 probe 에서만 죽으면 그 입력
+  클래스를 취약 신호(`likely_overflow`/`likely_format`)로 낸다. 크래시 파서는 wine 의
+  "Unhandled &lt;type&gt; at address &lt;hex&gt;"(illegal instruction·stack overflow·page
+  fault 등)를 일반화 파싱(`sandbox.pe_dynamic.pe_crash_triage`,
+  `POST /binaries/{sha}/pe-triage`). 실 zig 빌드 PE(fread 오버플로우 vs 정상)로 실측
 - tcache poisoning 익스 빌더(`heap/tcache-poison`) — **구현(opt-in)**: heap 익스
   primitive 를 계산하고 **실측 증명**한다. `tcache_poison_fd`(safe-linking 인지,
   `(fd_addr>>12)^target`)로 오염값을 계산하고, `build_poison_plan` 이 힙 상태+목표에서

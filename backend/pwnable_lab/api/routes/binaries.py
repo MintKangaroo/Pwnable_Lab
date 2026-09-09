@@ -420,6 +420,21 @@ async def binary_pe_run(
     return await run_in_threadpool(service.pe_dynamic_run, data, stdin_hex=stdin_hex)
 
 
+@router.post("/{sha256}/pe-triage")
+async def binary_pe_triage(
+    sha256: str,
+    repo: BinaryRepository = Depends(get_repository),
+    service: AnalysisService = Depends(get_service),
+) -> dict:
+    """PE 크래시 트리아지: overflow/format/negative probe 로 동적 취약점 신호 수집.
+
+    baseline 대비 특정 입력에서만 크래시하면 그 클래스가 취약 신호. 신뢰할 수 없는
+    PE 를 실행하므로 기본 비활성(샌드박스 실행 게이트) — 503 가능.
+    """
+    data = repo.load_bytes(sha256)
+    return await run_in_threadpool(service.pe_crash_triage, data)
+
+
 @router.post("/{sha256}/memdump")
 async def binary_memdump(
     sha256: str,
