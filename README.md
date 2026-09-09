@@ -668,9 +668,11 @@ Pwnable_Lab/
   카운트·free-list 헤드를 파싱. 나아가 PREV_INUSE 로 감지되는 free 청크
   (unsorted/small/large)의 fd/bk 를 읽어 **main_arena 를 힙만으로 복구**
   (unsorted fd = `bin_at(1)` = main_arena+0x60)하고, `fastbinsY`·top·last_remainder
-  를 읽어 fastbin 체인(safe-linking 역산)까지 보고한다(`sandbox.heap`,
-  `POST /binaries/{sha}/heap`; pwndbg heap/bins 축약). 실 gcc 바이너리(tcache 7·
-  fastbin 2·unsorted 1 스냅샷)로 실측
+  를 읽어 fastbin 체인(safe-linking 역산)까지 보고한다. main_arena 를 담은 libc
+  매핑에서 **libc base 를 복구**(`arena.libc_leak`: unsorted fd 를 UAF 로 읽어 ASLR
+  우회 — libc base·main_arena 오프셋)한다(`sandbox.heap`, `POST /binaries/{sha}/heap`;
+  pwndbg heap/bins 축약). 실 gcc 바이너리(tcache 7·fastbin 2·unsorted 1 스냅샷)로
+  실측하며 복구한 libc base 가 실제 매핑 시작과 일치함을 검증
 - libc 버전 식별/지문(`libc-id`) — **구현(실행 없음)**: libc 파일에서 버전 문자열·
   build-id·핵심 심볼 오프셋·`/bin/sh` 를 뽑아 지문화(`analyzer.libc_id`, `GET
   /binaries/{sha}/libc-id`). 원격 ret2libc 에서 유출한 심볼 주소로 libc base 와 다른
