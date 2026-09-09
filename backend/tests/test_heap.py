@@ -187,3 +187,64 @@ def test_free_chunks_smallbin_when_fd_in_heap():
     assert len(out) == 1
     assert out[0]["bin"] == "smallbin"
     assert out[0]["links_to_arena"] is False
+
+
+@_gated
+def test_inspect_heap_libc_leak(tmp_path):
+    from pwnable_lab.sandbox.debugger import DebugSession
+    from pwnable_lab.sandbox.heap import inspect_heap_session
+
+    path, cp = _build_bins(tmp_path)
+    # main_arena 를 담은 매핑의 파일을 ground truth 로: 그 path 의 최소 start 가 libc base.
+    session = DebugSession(path, limits=SandboxLimits())
+    try:
+        session.set_breakpoint(cp)
+        session.cont()
+        state = inspect_heap_session(session)
+        main_arena = int(state["arena"]["main_arena"], 16)
+        containing = next(
+            m for m in session.maps() if m["start"] <= main_arena < m["end"]
+        )
+        real_path = containing["path"]
+        real_base = min(
+            m["start"] for m in session.maps() if m.get("path") == real_path
+        )
+    finally:
+        session.close()
+
+    leak = state["arena"]["libc_leak"]
+    assert leak is not None
+    assert "libc" in leak["path"]
+    assert leak["path"] == real_path
+    assert int(leak["libc_base"], 16) == real_base
+    # main_arena = libc_base + offset 가 일관.
+    assert int(leak["libc_base"], 16) + int(leak["main_arena_offset"], 16) == main_arena
+    # leaked_pointer(UAF 로 읽는 값) = unsorted fd.
+    assert leak["leaked_pointer"] == state["free_chunks"][0]["fd"]
+
+
+def test_libc_leak_none_when_arena_unmapped():
+    from pwnable_lab.sandbox.heap import _libc_leak
+
+    class _FakeSession:
+        def maps(self):
+            return [{"start": 0x1000, "end": 0x2000, "path": "[heap]"}]
+
+    # main_arena 가 어느 매핑에도 없으면 leak 계산 불가 → None(정직).
+    assert _libc_leak(_FakeSession(), 0x7FFFDEAD0000) is None
+
+
+def test_libc_leak_computes_base_from_fake_maps():
+    from pwnable_lab.sandbox.heap import _libc_leak
+
+    class _FakeSession:
+        def maps(self):
+            return [
+                {"start": 0x7F0000, "end": 0x7F1000, "path": "/lib/libc.so.6"},
+                {"start": 0x7F1000, "end": 0x7F3000, "path": "/lib/libc.so.6"},
+            ]
+
+    leak = _libc_leak(_FakeSession(), 0x7F2000)  # 두 번째 매핑 안
+    assert leak["libc_base"] == "0x7f0000"  # 같은 path 최소 start
+    assert leak["main_arena_offset"] == "0x2000"
+    assert leak["leaked_pointer"] == f"0x{0x7F2000 + 0x60:x}"

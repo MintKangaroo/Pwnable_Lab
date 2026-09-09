@@ -274,6 +274,34 @@ def _read_arena(
         "top": f"0x{top:x}",
         "last_remainder": f"0x{last_rem:x}" if last_rem else None,
         "fastbins": fastbins,
+        "libc_leak": _libc_leak(session, main_arena),
+    }
+
+
+def _libc_leak(session: DebugSession, main_arena: int) -> dict | None:
+    """복구한 main_arena 로 libc base 를 계산한다(UAF 로 얻는 ASLR 깨기 leak).
+
+    main_arena 를 담은 매핑의 파일(같은 path)의 최소 start 가 libc base 다. unsorted
+    청크의 fd(=bin_at(1)=main_arena+0x60)만 UAF 로 읽으면 실전에선 libc 버전의
+    main_arena 오프셋으로 base 를 복원한다(그 오프셋을 여기서 함께 보고).
+    """
+
+    containing = next(
+        (m for m in session.maps() if m["start"] <= main_arena < m["end"]), None
+    )
+    if containing is None:
+        return None
+    path = containing.get("path", "")
+    same = (
+        [m for m in session.maps() if m.get("path") == path] if path else [containing]
+    )
+    libc_base = min(m["start"] for m in same)
+    return {
+        "path": path or None,
+        "libc_base": f"0x{libc_base:x}",
+        "main_arena_offset": f"0x{main_arena - libc_base:x}",
+        "leaked_pointer": f"0x{main_arena + _ARENA_UNSORTED_BIN_OFF:x}",
+        "note": "unsorted fd 를 UAF 로 읽어 libc base 복원(ASLR 우회)",
     }
 
 
