@@ -379,6 +379,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 | `GET` | `/binaries/{binary_id}/info` | format-aware 정규화 정보 |
 | `GET` | `/binaries/{binary_id}/elf` | Phase 2 ELF metadata 계약 |
 | `GET` | `/binaries/{binary_id}/pe` | PE32/PE32+ metadata; non-PE는 거부 |
+| `POST` | `/binaries/{binary_id}/heap` | 힙 인스펙터(청크·tcache·fastbin·unsorted·main_arena·libc leak); 실행 게이트(503 가능) |
 | `POST` | `/binaries/{binary_id}/heap/tcache-poison` | tcache poisoning 실측 증명(fd 오염→임의 할당); 실행 게이트(503 가능) |
 | `POST` | `/binaries/{binary_id}/pe-run` | PE 동적 실행(wine): stdout/exit·Windows 예외 관측; 실행 게이트(503 가능) |
 | `POST` | `/binaries/{binary_id}/pe-triage` | PE 크래시 트리아지(wine): overflow/format probe 로 동적 취약점 신호; 실행 게이트(503 가능) |
