@@ -412,6 +412,17 @@ export const api = {
       breakpoint: opts.breakpoint,
       steps: opts.steps,
     }),
+  heap: (sha: string, opts: { breakpoint?: number; steps?: number }) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/heap`, {
+      breakpoint: opts.breakpoint,
+      steps: opts.steps,
+    }),
+  peRun: (sha: string, opts: { stdinHex?: string }) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/pe-run`, {
+      stdin_hex: opts.stdinHex,
+    }),
+  peTriage: (sha: string) =>
+    postQuery<Record<string, unknown>>(`/binaries/${sha}/pe-triage`, {}),
   cfg: (sha: string, address: number | string) =>
     request<Record<string, unknown>>(`/binaries/${sha}/functions/${address}/cfg`),
   xrefs: (
