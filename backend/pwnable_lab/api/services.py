@@ -106,6 +106,7 @@ from pwnable_lab.sandbox import (
     execution_trace,
     find_oep_candidate,
     inspect_heap,
+    pe_crash_triage,
     prove_tcache_poison,
     require_isolation_marker,
     require_sandbox_enabled,
@@ -1475,6 +1476,33 @@ class AnalysisService:
         prefix = path + ".wine"
         try:
             return run_pe(path, stdin_data=stdin_data, wineprefix=prefix, limits=limits)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            shutil.rmtree(prefix, ignore_errors=True)
+
+    def pe_crash_triage(self, data: bytes) -> dict:
+        """PE 에 입력 probe 배터리를 주입해 크래시를 분류한다(동적 취약점 트리아지).
+
+        overflow/format/negative probe 를 각각 실행해 크래시·예외 종류를 모으고,
+        baseline 대비 어느 입력에서만 죽는지로 취약 신호를 낸다. 신뢰할 수 없는 PE 를
+        **실행**하므로 마스터 게이트+격리 마커를 강제한다(in-process). 기본 비활성 — 503.
+        """
+
+        require_sandbox_enabled(self.settings)
+        self._require_format(data, ArtifactFormat.PE, feature="PE crash triage")
+        require_isolation_marker(self.settings)
+        limits = SandboxLimits(
+            wall_seconds=self.settings.sandbox_wall_seconds,
+            cpu_seconds=self.settings.sandbox_cpu_seconds,
+            address_space_bytes=self.settings.sandbox_address_space_bytes,
+        )
+        path = self._materialize(data)
+        prefix = path + ".wine"
+        try:
+            return pe_crash_triage(path, wineprefix=prefix, limits=limits)
         finally:
             try:
                 os.unlink(path)

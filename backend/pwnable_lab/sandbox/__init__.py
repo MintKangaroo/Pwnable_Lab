@@ -60,7 +60,7 @@ from pwnable_lab.sandbox.memdump import dump_memory
 from pwnable_lab.sandbox.oep import find_oep_candidate
 from pwnable_lab.sandbox.orw import auto_orw as auto_orw_core
 from pwnable_lab.sandbox.orw import auto_orw_pie as auto_orw_pie_core
-from pwnable_lab.sandbox.pe_dynamic import run_pe
+from pwnable_lab.sandbox.pe_dynamic import pe_crash_triage, run_pe
 from pwnable_lab.sandbox.pie import auto_execve_pie as auto_execve_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2system_pie as auto_ret2system_pie_core
 from pwnable_lab.sandbox.pie import auto_ret2win_pie as auto_ret2win_pie_core
@@ -136,6 +136,7 @@ __all__ = [
     "find_oep_candidate",
     "inspect_heap",
     "inspect_heap_session",
+    "pe_crash_triage",
     "prove_tcache_poison",
     "tcache_poison_fd",
     "resolve_pie_base",
