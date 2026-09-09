@@ -2734,6 +2734,17 @@ function _intOrUndef(value) {
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
+// 텍스트 stdin → hex(서버는 stdin_hex 로 받는다). 빈 값은 undefined.
+function _textToHex(value) {
+  const t = String(value || '');
+  if (!t) return undefined;
+  let out = '';
+  for (let i = 0; i < t.length; i += 1) {
+    out += t.charCodeAt(i).toString(16).padStart(2, '0');
+  }
+  return out;
+}
+
 function DynamicAnalysis({ sha }) {
   // 패킹/언패킹/런타임 strings/OEP/트레이스/메모리 덤프/QEMU 크로스아치 실행.
   const [packState, runPack] = useSandboxAction(() => api.packing(sha));
@@ -2751,6 +2762,13 @@ function DynamicAnalysis({ sha }) {
   const [qemuState, runQemu] = useSandboxAction((stdin, strace) =>
     api.qemuRun(sha, { stdin, strace }),
   );
+  const [heapState, runHeap] = useSandboxAction((bp, steps) =>
+    api.heap(sha, { breakpoint: bp, steps }),
+  );
+  const [peRunState, runPeRun] = useSandboxAction((stdinHex) =>
+    api.peRun(sha, { stdinHex }),
+  );
+  const [peTriageState, runPeTriage] = useSandboxAction(() => api.peTriage(sha));
 
   const [rsBp, setRsBp] = useState('');
   const [rsSteps, setRsSteps] = useState('');
@@ -2761,6 +2779,9 @@ function DynamicAnalysis({ sha }) {
   const [dumpSelect, setDumpSelect] = useState('writable');
   const [qemuStdin, setQemuStdin] = useState('');
   const [qemuStrace, setQemuStrace] = useState(false);
+  const [heapBp, setHeapBp] = useState('');
+  const [heapSteps, setHeapSteps] = useState('');
+  const [peStdin, setPeStdin] = useState('');
 
   return (
     <div className="strategy-workspace runner-workspace">
@@ -3080,6 +3101,225 @@ function DynamicAnalysis({ sha }) {
           </div>
         )}
       </section>
+
+      {/* 힙 인스펙터 (glibc 청크·tcache·fastbin·unsorted) */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>힙 인스펙터 (glibc)</h3>
+          <span>청크 · tcache · fastbin · unsorted · main_arena 복구</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            breakpoint(hex)
+            <input value={heapBp} onChange={(e) => setHeapBp(e.target.value)} />
+          </label>
+          <label className="runner-field">
+            steps
+            <input value={heapSteps} onChange={(e) => setHeapSteps(e.target.value)} />
+          </label>
+          <button
+            className="button secondary"
+            disabled={heapState.status === 'running'}
+            onClick={() => runHeap(_hexOrUndef(heapBp), _intOrUndef(heapSteps))}
+          >
+            힙 덤프
+          </button>
+        </div>
+        <RunnerResult state={heapState} />
+        {heapState.status === 'done' && heapState.result.attempted && (
+          <HeapView result={heapState.result} />
+        )}
+        {heapState.status === 'done' && !heapState.result.attempted && (
+          <p className="runner-kv">
+            <span>결과</span>
+            <strong>미시도 ({String(heapState.result.reason)})</strong>
+          </p>
+        )}
+      </section>
+
+      {/* PE 동적 실행 (wine) */}
+      <section className="runner-card">
+        <div className="section-heading">
+          <h3>PE 동적 실행 (wine)</h3>
+          <span>Windows PE 실행 · stdout/exit · Windows 예외 관측</span>
+        </div>
+        <div className="runner-actions">
+          <label className="runner-field">
+            stdin(text)
+            <input value={peStdin} onChange={(e) => setPeStdin(e.target.value)} />
+          </label>
+          <button
+            className="button secondary"
+            disabled={peRunState.status === 'running'}
+            onClick={() => runPeRun(_textToHex(peStdin))}
+          >
+            실행
+          </button>
+          <button
+            className="button secondary"
+            disabled={peTriageState.status === 'running'}
+            onClick={() => runPeTriage()}
+          >
+            크래시 트리아지
+          </button>
+        </div>
+        <RunnerResult state={peRunState} />
+        {peRunState.status === 'done' && <PeRunView result={peRunState.result} />}
+        <RunnerResult state={peTriageState} />
+        {peTriageState.status === 'done' && peTriageState.result.attempted && (
+          <PeTriageView result={peTriageState.result} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function HeapView({ result }) {
+  const arena = result.arena;
+  return (
+    <div className="heap-view">
+      <p className="runner-kv">
+        <span>heap</span>
+        <strong>
+          {String(result.heap?.start)} – {String(result.heap?.end)} · 청크{' '}
+          {String(result.chunk_count)}개
+        </strong>
+      </p>
+      {(result.tcache || []).length > 0 && (
+        <div>
+          <h4 className="heap-sub">tcache</h4>
+          {result.tcache.map((b) => (
+            <p key={`tc-${b.index}`} className="runner-kv">
+              <span>
+                bin {b.index} ({b.chunk_size})
+              </span>
+              <strong>
+                count {b.count} · head {String(b.head_hex)}
+              </strong>
+            </p>
+          ))}
+        </div>
+      )}
+      {arena && (arena.fastbins || []).length > 0 && (
+        <div>
+          <h4 className="heap-sub">fastbins (main_arena {String(arena.main_arena)})</h4>
+          {arena.fastbins.map((b) => (
+            <p key={`fb-${b.index}`} className="runner-kv">
+              <span>
+                bin {b.index} ({b.chunk_size})
+              </span>
+              <strong>
+                count {b.count} · {(b.chain || []).join(' → ')}
+              </strong>
+            </p>
+          ))}
+        </div>
+      )}
+      {(result.free_chunks || []).length > 0 && (
+        <div>
+          <h4 className="heap-sub">free 청크 (unsorted/small/large)</h4>
+          {result.free_chunks.map((c, i) => (
+            <p key={`fc-${i}`} className="runner-kv">
+              <span>
+                {c.addr} ({c.size})
+              </span>
+              <strong>
+                <Badge tone={c.bin === 'unsorted' ? 'orange' : 'neutral'}>
+                  {c.bin}
+                </Badge>{' '}
+                fd {c.fd}
+              </strong>
+            </p>
+          ))}
+        </div>
+      )}
+      <details className="heap-raw">
+        <summary>전체 청크 ({String(result.chunk_count)})</summary>
+        <pre className="dbg-stack">
+          <code>
+            {(result.chunks || [])
+              .map(
+                (c) =>
+                  `${c.addr}  size=${c.size}  ${
+                    c.tcache_struct
+                      ? 'tcache_struct'
+                      : c.in_use === false
+                        ? 'FREE'
+                        : 'inuse'
+                  }`,
+              )
+              .join('\n')}
+          </code>
+        </pre>
+      </details>
+    </div>
+  );
+}
+
+function PeRunView({ result }) {
+  if (!result.attempted) {
+    return (
+      <p className="runner-kv">
+        <span>결과</span>
+        <strong>미시도 ({String(result.reason)})</strong>
+      </p>
+    );
+  }
+  return (
+    <div>
+      <p className="runner-kv">
+        <span>결과</span>
+        <strong>
+          {result.crashed ? (
+            <Badge tone="danger">CRASH · {String(result.crash?.reason)}</Badge>
+          ) : (
+            <>exit {String(result.exit_code)}</>
+          )}
+          {result.timed_out ? ' · timeout' : ''}
+          {result.crash?.fault_address
+            ? ` · fault ${String(result.crash.fault_address)}`
+            : ''}
+          {result.crash?.instruction_pointer
+            ? ` · ip ${String(result.crash.instruction_pointer)}`
+            : ''}
+        </strong>
+      </p>
+      {result.stdout && (
+        <pre className="shell-term">
+          <code>{result.stdout}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function PeTriageView({ result }) {
+  return (
+    <div>
+      <p className="runner-kv">
+        <span>트리아지</span>
+        <strong>
+          {result.likely_overflow && <Badge tone="danger">overflow 의심</Badge>}{' '}
+          {result.likely_format && <Badge tone="danger">format 의심</Badge>}{' '}
+          {!result.likely_overflow && !result.likely_format && (
+            <Badge tone="green">뚜렷한 신호 없음</Badge>
+          )}
+        </strong>
+      </p>
+      {(result.results || []).map((r) => (
+        <p key={`pr-${r.probe}`} className="runner-kv">
+          <span>
+            {r.probe} ({r.input_len}B)
+          </span>
+          <strong>
+            {r.crashed ? (
+              <Badge tone="danger">CRASH · {String(r.crash?.reason)}</Badge>
+            ) : (
+              <Badge tone="neutral">exit {String(r.exit_code)}</Badge>
+            )}
+          </strong>
+        </p>
+      ))}
     </div>
   );
 }
